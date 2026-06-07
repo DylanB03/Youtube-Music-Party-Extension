@@ -1,0 +1,24 @@
+{
+  "name": "youtube-music-party",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "check": "npm run check --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "test:browser": "npm run build:extension && playwright test",
+    "dev:backend": "npm --workspace apps/backend run dev",
+    "dev:extension": "npm --workspace apps/extension run dev",
+    "build:backend": "npm --workspace apps/backend run build",
+    "build:extension": "npm --workspace apps/extension run build"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.53.2",
+    "typescript": "^5.8.3",
+    "vitest": "^4.1.8"
+  }
+}

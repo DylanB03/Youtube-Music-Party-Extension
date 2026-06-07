@@ -36,7 +36,7 @@ Selecting **Join playback** changes the guest's YouTube Music tab to the party's
 
 The party has one shared current song, playback position, playback state, and ordered queue. Queue items play automatically in order when the current song ends or the party skips forward.
 
-The host's play and pause actions update playback for the entire party. The host can always seek, skip, add songs, remove songs, and reorder the queue.
+The host's play and pause actions update playback for the entire party. The host can always seek within the current song, skip to the next queued song, add songs, remove songs, and reorder the queue.
 
 ### Manage Guest Permissions
 
@@ -45,7 +45,7 @@ The host changes guest permissions using toggles in the side panel:
 - **Allow guests to skip:** guests can advance the party to the next queued song.
 - **Allow guests to add songs:** guests can add songs to the shared queue.
 
-Only the host can play or pause the party. Guests can always control their own volume because volume is local and does not affect synchronization.
+Only the host can play, pause, or seek within the current song for the party. Guest fast-forward and rewind actions are local only and do not update the shared session. Guests can always control their own volume because volume is local and does not affect synchronization.
 
 ### Add Songs To The Queue
 
@@ -57,7 +57,7 @@ The side panel displays the ordered queue. The host can remove items and reorder
 
 ### Recover From Desynchronization
 
-If a guest pauses, resumes, or seeks locally without permission, their action affects only their own tab. The panel marks them as **Out of sync** and shows a **Rejoin playback** button.
+If a guest pauses, resumes, fast-forwards, or rewinds locally, their action affects only their own tab. The panel marks them as **Out of sync** and shows a **Rejoin playback** button.
 
 Selecting **Rejoin playback** returns the guest to the party's current song, playback state, and position.
 
@@ -81,7 +81,7 @@ The side panel clearly communicates:
 ## MVP Scope
 
 - Create and join parties using links and short codes.
-- Synchronize current song, position, play, pause, seek, and skip actions.
+- Synchronize current song, position, host play, host pause, host seek, and permitted skip actions.
 - Automatically play the shared queue in order.
 - Expose host-managed guest permission toggles.
 - Add songs from the existing YouTube Music song menu.
@@ -104,4 +104,3 @@ The side panel clearly communicates:
 - Bypassing advertisements, subscription restrictions, regional restrictions, or unavailable tracks.
 - Synchronizing each participant's local volume.
 - Replacing or modifying YouTube Music's native queue.
-

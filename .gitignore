@@ -1,0 +1,11 @@
+node_modules
+.output
+.wxt
+dist
+.wrangler
+playwright-report
+test-results
+.dev.vars
+*.local
+.agents/
+.codex/

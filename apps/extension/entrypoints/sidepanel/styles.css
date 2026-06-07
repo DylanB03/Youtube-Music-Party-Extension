@@ -1,0 +1,177 @@
+:root {
+  color: #251410;
+  background: #fff5e8;
+  font-family: "Fraunces", "Georgia", serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+button {
+  border: 0;
+  border-radius: 999px;
+  background: #251410;
+  color: #fff7ec;
+  cursor: pointer;
+  padding: 0.6rem 0.9rem;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.35;
+}
+
+input {
+  width: 100%;
+  border: 1px solid #e2b88f;
+  border-radius: 0.8rem;
+  background: #fffaf2;
+  padding: 0.7rem 0.8rem;
+}
+
+.panel {
+  display: grid;
+  gap: 0.9rem;
+  min-height: 100vh;
+  padding: 1rem;
+}
+
+.hero {
+  border-radius: 1.4rem;
+  background:
+    radial-gradient(circle at 15% 20%, #ffd166 0 20%, transparent 21%),
+    linear-gradient(135deg, #f95738, #ffb703);
+  color: #24120d;
+  padding: 1rem;
+}
+
+.hero h1 {
+  font-size: 1.7rem;
+  line-height: 1;
+  margin: 0.2rem 0;
+}
+
+.eyebrow,
+.label {
+  color: #7b2d18;
+  font-family: "Space Mono", monospace;
+  font-size: 0.73rem;
+  letter-spacing: 0.08em;
+  margin: 0;
+  text-transform: uppercase;
+}
+
+.card {
+  border: 1px solid rgba(123, 45, 24, 0.18);
+  border-radius: 1.2rem;
+  background: rgba(255, 250, 242, 0.9);
+  box-shadow: 0 14px 36px rgba(80, 39, 18, 0.08);
+  padding: 0.9rem;
+}
+
+.stack {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.primary {
+  background: #f95738;
+}
+
+.muted {
+  color: #7b655c;
+  margin: 0;
+}
+
+.notice {
+  border-radius: 0.9rem;
+  padding: 0.75rem;
+}
+
+.error {
+  background: #ffe1d8;
+  color: #7b1e16;
+}
+
+.join-row,
+.status-row,
+.queue-heading {
+  align-items: center;
+  display: flex;
+  gap: 0.6rem;
+  justify-content: space-between;
+}
+
+.invite-code {
+  border-radius: 0.8rem;
+  background: #251410;
+  color: #ffcf70;
+  font-family: "Space Mono", monospace;
+  font-size: 1.6rem;
+  letter-spacing: 0.18em;
+  padding: 0.7rem;
+  text-align: center;
+}
+
+.now-playing {
+  font-size: 1.05rem;
+  margin: 0.75rem 0 0;
+}
+
+.now-playing span,
+small {
+  color: #7b655c;
+}
+
+.toggle {
+  align-items: center;
+  display: flex;
+  gap: 0.55rem;
+}
+
+.toggle input {
+  width: auto;
+}
+
+.queue {
+  display: grid;
+  gap: 0.6rem;
+  margin: 0;
+  padding-left: 1.2rem;
+}
+
+.queue li {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.queue li span {
+  display: grid;
+}
+
+.queue-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.queue-actions button {
+  padding: 0.35rem 0.55rem;
+}
+
+.participant {
+  display: flex;
+  justify-content: space-between;
+  margin: 0;
+}
