@@ -10,6 +10,9 @@ This document describes the current feature set, user and system workflows, diff
 
 - Chrome Manifest V3 extension with a YouTube Music content script and side panel.
 - Party creation and joining through shareable invite links and short codes.
+- Validated invite landing pages that open YouTube Music with the party code.
+- An isolated YouTube Music invite prompt that prepares and opens the side panel without joining automatically.
+- Pending invite expiry, prefilled join forms, and explicit handling when the user is already in another party.
 - Authoritative realtime rooms backed by Cloudflare Durable Objects.
 - Room-scoped participant identities and persistent participant tokens.
 - Short-lived, single-use WebSocket connection tickets.
@@ -23,33 +26,41 @@ This document describes the current feature set, user and system workflows, diff
 - Guest out-of-sync detection after local pause, play, seek, large drift, advertisements, or unavailable tracks.
 - Explicit **Navigating** and **Reconnecting** states.
 - Independent local volume that is never synchronized.
-- Chrome context-menu **Add to party queue** action using the exact latest right-clicked song.
+- Native-feeling **Add to party queue** action injected into recognized YouTube Music song menus.
+- Shadow DOM isolation for the injected menu action so YouTube Music styles cannot corrupt it.
+- Permission-aware menu states that explain when the user is not in a party or guest additions are disabled.
+- Chrome context-menu fallback using the exact latest right-clicked song and matching party permissions.
+- Menu selections expire and are revalidated at click time so stale songs cannot be queued.
+- Targeted popup observation that inspects added menu nodes rather than rescanning the document after every YouTube Music mutation.
 - Strict rejection of missing or ambiguous context-song selections.
 - Host reconnection grace period and automatic host transfer.
 - Multiple simultaneous connections for one participant without false disconnects.
 - Removal of inactive non-host participants and their stored credentials.
 - Extension session recovery after a Manifest V3 service worker restart.
 - Runtime backend message validation and request rate limits.
+- Configurable participant, queue, WebSocket message-size, message-rate, display-name, and track-metadata limits.
+- Absolute room expiration and abandoned-room idle expiration with invite and Durable Object cleanup.
+- Terminal expired-room handling that clears saved extension credentials instead of reconnecting forever.
 - Remote playback event suppression to prevent synchronization feedback loops.
 - Automatic correction of medium playback drift for in-sync guests.
 - Canonical playback reapplication after room changes, navigation, or page reload.
 - Adapter diagnostics through `window.__ytmPartyDiagnostics()`.
 - Unit and orchestration tests for permissions, queue behavior, revisions, presence, host transfer, synchronization, and controller behavior.
 - Playwright smoke test that launches the production extension on the live YouTube Music origin and verifies content-script diagnostics.
+- Two-client local Durable Object tests for queueing, permissions, playback, stale revisions, reconnect recovery, host transfer, participant limits, and lifecycle expiry.
+- Recorded selector fixtures for search, album, playlist, queue, and recommendation surfaces.
+- Side-panel loading states, actionable errors, success notices, host-disconnected notice, clipboard feedback, and leave-party control.
 
 ### Partially Implemented
 
-- Track detection reads page URLs and player-bar metadata, but all YouTube Music variants have not been validated.
+- Track detection reads page URLs, row links, row video IDs, and player-bar metadata, but every live YouTube Music variant still cannot be guaranteed.
 - Track loading clicks an existing matching link when possible and otherwise navigates to a watch URL.
 - Advertisement and unavailable-track handling uses DOM and media-error heuristics that require broader live validation.
-- Invite links display the code and joining instructions instead of automatically opening YouTube Music and the extension.
 - Large drift and guest playback changes intentionally require manual rejoin.
 
 ### Not Yet Implemented
 
-- Direct insertion into YouTube Music's internal three-dot menu.
-- Two-browser end-to-end tests for synchronized playback and queue mutations.
-- Verified selectors for every YouTube Music page and advertisement variant.
+- Signed-in manual validation across every current YouTube Music page and advertisement variant.
 - User accounts, profiles, friends, and direct friend invitations.
 - Queue voting or guest removal of their own submissions.
 
@@ -68,11 +79,15 @@ This document describes the current feature set, user and system workflows, diff
 ### Join A Party
 
 1. A guest receives an invite link or short code.
-2. The guest opens YouTube Music, opens the side panel, and enters the code.
-3. The backend validates the code and issues a guest identity and participant token.
-4. The extension obtains a one-use connection ticket and connects to the room.
-5. The guest selects **Join playback**.
-6. The content script loads the canonical track, seeks to the calculated position, and matches the shared play state.
+2. Opening a valid link displays the code and an **Open YouTube Music** action.
+3. YouTube Music displays an isolated invite prompt; selecting **Open party panel** stores the code locally for up to 30 minutes and pre-fills the side panel.
+4. The guest chooses a display name and explicitly selects **Join**. A short code can also be entered directly in the panel.
+5. The backend validates the code and issues a guest identity and participant token.
+6. The extension obtains a one-use connection ticket and connects to the room.
+7. The guest explicitly selects **Join playback**.
+8. The content script loads the canonical track, seeks to the calculated position, and matches the shared play state.
+
+Preparing an invite never joins a room or changes playback. If the user is already in a party, the panel keeps the pending invite visible and requires them to leave before joining it.
 
 ### Synchronize Playback
 
@@ -87,12 +102,12 @@ Only the host changes shared play, pause, and current-track position. Guests may
 
 ### Add And Manage Queue Items
 
-1. A user right-clicks a YouTube Music song.
-2. The content script stores the track associated with that menu event.
-3. The user selects **Add to party queue** from Chrome's extension context menu.
-4. The content script consumes the stored selection so it cannot be reused accidentally.
-5. The backend permits the host, or a guest when guest additions are enabled, to add it.
-6. The backend acknowledges the mutation and broadcasts the updated queue.
+1. A user selects a song's three-dot menu or right-clicks a YouTube Music song.
+2. The content script resolves the containing song row and stores the track for up to ten seconds.
+3. Recognized YouTube Music menus receive an isolated **Add to party queue** action; Chrome's context menu remains the fallback.
+4. The action is enabled for the host or a permitted guest and otherwise displays the reason it is unavailable.
+5. Selecting the action consumes the stored song so it cannot be reused accidentally.
+6. The backend validates the same permission, acknowledges the mutation, and broadcasts the updated queue.
 
 The host can remove or reorder queue items from the side panel. A permitted skip or host track-ended event advances to the first queued song.
 
@@ -111,6 +126,8 @@ When a track application requires page navigation, the extension displays **Navi
 The extension stores room credentials and local sync state in `chrome.storage.local`. After a service worker restart or unexpected socket close, it requests a fresh connection ticket, reconnects with exponential backoff, and resends unresolved operations. Repeated operations return their stored acknowledgement rather than executing twice.
 
 If the host remains disconnected beyond the grace period, authority transfers to the longest-connected guest. Disconnected non-host participants are removed after the retention period.
+
+Rooms have an absolute lifetime and an abandoned idle lifetime. Expiration closes remaining sockets, removes the invite-code mapping, and deletes Durable Object storage.
 
 ## System Workflow
 
@@ -135,11 +152,12 @@ The content script owns YouTube Music DOM and media interaction. The background 
 ## Changes From Planning
 
 - `layout.md` proposed Zod; the implementation uses dependency-free TypeScript runtime validators.
-- `layout.md` mentioned Shadow DOM, but no page UI is injected yet.
-- The PRD requests a YouTube Music three-dot menu action; the current reliable implementation uses Chrome's context menu.
-- Invite links currently show the code and instructions rather than opening the extension automatically.
+- The page menu action uses Shadow DOM rather than inheriting YouTube Music's internal styles.
+- Direct menu insertion is implemented for recognized menu containers, with Chrome's context menu retained because YouTube Music controls and may change its private DOM.
+- Invite links open YouTube Music with a query parameter because websites cannot directly navigate to a Chrome extension page. The content script then requires an explicit click before opening the side panel.
 - Cloudflare Durable Objects store room state and KV stores invite mappings and rate-limit counters.
 - Authentication tokens, one-use tickets, operation acknowledgements, reconnect recovery, rate limits, inactive participant cleanup, strict context selection, event suppression, and diagnostics were added as hardening beyond the original planning documents.
+- Explicit room caps, socket guards, room lifecycle cleanup, detailed side-panel feedback, selector fixtures, and local two-client integration tests were added beyond the original planning documents.
 
 ## File Map
 
@@ -152,6 +170,7 @@ The content script owns YouTube Music DOM and media interaction. The background 
 - `package.json`: Defines workspaces and root development, verification, and build commands.
 - `package-lock.json`: Locks dependency versions.
 - `playwright.config.ts`: Configures browser smoke tests and failure traces.
+- `docs/youtube-music-selector-validation.md`: Provides the signed-in selector and interruption validation checklist.
 - `tsconfig.base.json`: Supplies shared strict TypeScript settings.
 - `.gitignore`: Excludes dependencies, generated output, Wrangler state, and local configuration.
 
@@ -169,37 +188,72 @@ The content script owns YouTube Music DOM and media interaction. The background 
 - `apps/backend/src/party-room.ts`: Persists rooms, authenticates tickets, manages sockets and presence, dispatches mutations, and stores operation results.
 - `apps/backend/src/domain/room-state.ts`: Contains pure permission, playback, queue, revision, presence, cleanup, and host-transfer rules.
 - `apps/backend/src/domain/room-state.test.ts`: Verifies backend domain behavior.
-- `apps/backend/src/lib/http.ts`: Builds JSON responses, parses bodies, and renders invite pages.
+- `apps/backend/src/domain/connection-guard.ts`: Measures message bytes and enforces per-socket burst limits.
+- `apps/backend/src/domain/connection-guard.test.ts`: Verifies message-size and rate-window behavior.
+- `apps/backend/src/domain/room-lifecycle.ts`: Calculates absolute and abandoned-idle room expiration.
+- `apps/backend/src/domain/room-lifecycle.test.ts`: Verifies lifecycle deadlines.
+- `apps/backend/src/domain/room-limits.ts`: Reads configurable room limits and validates display names.
+- `apps/backend/src/lib/http.ts`: Builds JSON responses and parses request bodies.
+- `apps/backend/src/lib/invite-page.ts`: Renders valid and expired invite landing pages with the YouTube Music deep link.
+- `apps/backend/src/lib/invite-page.test.ts`: Verifies invite deep links and expired-link responses.
+- `apps/backend/src/lib/config.ts`: Reads bounded backend and room configuration values.
 - `apps/backend/src/lib/ids.ts`: Generates IDs, invite codes, and secure tokens.
 - `apps/backend/src/lib/rate-limit.ts`: Applies approximate KV-backed fixed-window request limits.
 - `apps/backend/src/types.ts`: Defines Worker bindings and stored authentication/session records.
 - `apps/backend/package.json`, `apps/backend/tsconfig.json`, and `apps/backend/wrangler.toml`: Configure backend dependencies, types, and Cloudflare resources.
+- `apps/backend/wrangler.e2e.toml`: Supplies short, isolated limits and lifecycle timings for local browser tests.
 
 ### Extension
 
 - `apps/extension/entrypoints/background.ts`: Registers extension listeners and wires API, storage, tabs, controller, and realtime client.
 - `apps/extension/entrypoints/content.ts`: Starts observation, context capture, diagnostics, and playback command handling.
 - `apps/extension/entrypoints/sidepanel/main.tsx`: Implements create/join, invite, status, permission, queue, and participant interactions.
+- `apps/extension/entrypoints/sidepanel/party-setup-card.tsx`: Owns display-name, create-party, invite-prefill, and explicit join interactions.
+- `apps/extension/entrypoints/sidepanel/use-party-session.ts`: Centralizes side-panel requests, pending state, errors, and success notices.
+- `apps/extension/entrypoints/sidepanel/use-pending-invite.ts`: Loads, updates, expires, and clears prepared invite state for the panel.
+- `apps/extension/entrypoints/sidepanel/queue-card.tsx`: Owns queue rendering, skipping, removal, and reordering controls.
+- `apps/extension/entrypoints/sidepanel/permission-toggle.tsx`: Provides reusable permission controls.
 - `apps/extension/entrypoints/sidepanel/styles.css`: Defines side-panel presentation.
 - `apps/extension/src/party-api.ts`: Calls room, join, and connection-ticket HTTP endpoints.
+- `apps/extension/src/party-context-menu.ts`: Registers and permission-gates Chrome's queue fallback action.
+- `apps/extension/src/invite-code.ts`: Normalizes invite codes independently of browser storage.
+- `apps/extension/src/pending-invite-storage.ts`: Stores prepared invite codes locally with a 30-minute lifetime.
+- `apps/extension/src/pending-invite-storage.test.ts`: Verifies invite-code normalization.
 - `apps/extension/src/party-client.ts`: Manages ticket-authenticated sockets, reconnects, pending operations, snapshots, and clock pings.
 - `apps/extension/src/party-controller.ts`: Orchestrates sessions, serialized mutations, synchronization, navigation, and user actions.
 - `apps/extension/src/party-controller.test.ts`: Verifies controller permissions, serialization, and playback reconciliation.
 - `apps/extension/src/playback-policy.ts`: Contains pure guest drift and reconciliation decisions.
 - `apps/extension/src/playback-policy.test.ts`: Verifies drift and interruption decisions.
 - `apps/extension/src/playback-application.ts`: Defines applied-versus-navigating playback outcomes.
+- `apps/extension/src/queue-access.ts`: Centralizes host and guest queue-add availability and explanations.
+- `apps/extension/src/queue-access.test.ts`: Verifies queue-add access for hosts, guests, and users outside a party.
 - `apps/extension/src/session-storage.ts`: Persists room credentials and local sync state.
 - `apps/extension/src/session-types.ts`: Defines active, stored, view, connection, and mutation types.
 - `apps/extension/src/tab-gateway.ts`: Encapsulates content-script communication.
 - `apps/extension/src/youtube-music-adapter.ts`: Coordinates playback application, observation, context capture, suppression, and diagnostics.
 - `apps/extension/src/youtube-music/navigation.ts`: Loads tracks through matching links or controlled navigation.
+- `apps/extension/src/youtube-music/invite-link.ts`: Reads and removes party invite parameters from YouTube Music URLs.
+- `apps/extension/src/youtube-music/invite-link.test.ts`: Verifies invite URL parsing and cleanup.
+- `apps/extension/src/youtube-music/invite-prompt.ts`: Builds the isolated invite confirmation prompt without using page HTML injection.
+- `apps/extension/src/youtube-music/invite-prompt-styles.ts`: Defines the prompt's Shadow DOM presentation.
+- `apps/extension/src/youtube-music/party-menu.ts`: Observes YouTube Music popups and coordinates injected queue actions.
+- `apps/extension/src/youtube-music/party-menu-selection.ts`: Revalidates and consumes menu selections immediately before queue mutation.
+- `apps/extension/src/youtube-music/party-menu-selection.test.ts`: Verifies stale or replaced menu selections are rejected.
+- `apps/extension/src/youtube-music/party-menu-styles.ts`: Defines the isolated injected action appearance.
 - `apps/extension/src/youtube-music/selectors.ts`: Extracts tracks, playback, advertisements, and unavailable state.
+- `apps/extension/src/youtube-music/track-selection.ts`: Captures, expires, peeks, and consumes right-click and three-dot song selections.
+- `apps/extension/src/youtube-music/track-selection.test.ts`: Verifies one-use and expiration behavior for selected tracks.
 - `apps/extension/src/browser.ts`, `config.ts`, `env.d.ts`, and `extension-messaging.ts`: Provide browser, URL, environment, and typed-message utilities.
 - `apps/extension/package.json`, `tsconfig.json`, and `wxt.config.ts`: Configure the extension build and manifest.
 
 ### Browser Tests
 
-- `tests/browser/extension-smoke.spec.ts`: Loads the unpacked production extension in Chromium, opens YouTube Music, and verifies content-script diagnostics.
+- `tests/browser/extension-smoke.spec.ts`: Loads the unpacked production extension in Chromium, verifies diagnostics, and exercises three-dot selection plus Shadow DOM menu injection on the YouTube Music origin.
+- `tests/browser/invite-link-flow.spec.ts`: Verifies the backend landing page, YouTube Music prompt, prepared code, panel prefill, and absence of automatic joining.
+- `tests/browser/party-room-flow.spec.ts`: Runs two realtime clients against local Wrangler and verifies room behavior and lifecycle.
+- `tests/browser/selector-fixtures.spec.ts`: Validates known signed-in surface shapes and interruption selectors on the YouTube Music origin.
+- `tests/browser/fixtures/youtube-music-surfaces.ts`: Records representative song-row structures without bypassing YouTube Music Trusted Types.
+- `tests/browser/support/party-test-client.ts`: Provides the HTTP, ticket, WebSocket, and message-waiting test client.
 
 ## Current Verification
 
@@ -213,6 +267,6 @@ env XDG_CONFIG_HOME=/tmp npm run build:backend
 env PLAYWRIGHT_BROWSERS_PATH=/tmp/playwright-browsers npm run test:browser
 ```
 
-The suite contains 20 unit and orchestration tests plus one live-origin browser smoke test. The smoke test proves that the production extension and content script load on YouTube Music; it does not yet prove every selector, advertisement flow, menu variant, or two-client synchronization path.
+The suite contains 41 unit and orchestration tests plus five browser/integration scenarios. Browser coverage proves production extension loading, invite preparation without automatic joining, representative menu injection, five signed-in surface fixtures, ad and unavailable selectors, two-client realtime room behavior, reconnect recovery, host transfer, and abandoned-room expiry. The signed-in checklist remains necessary because YouTube Music can change private DOM variants independently of this project.
 
 `npm audit` reports six advisories in WXT's local `web-ext-run` development chain, for which npm currently offers no patched WXT path. The critical Vitest advisory was removed by upgrading to Vitest 4.1.8. The remaining affected tools are used during local extension development and are not included in the built extension or Worker bundle.

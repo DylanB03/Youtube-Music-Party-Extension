@@ -22,6 +22,13 @@ export type Track = {
   durationSeconds?: number;
 };
 
+export const trackFieldLimits = {
+  videoId: 128,
+  title: 200,
+  artist: 200,
+  thumbnailUrl: 2_048,
+} as const;
+
 export type QueueItem = {
   id: string;
   track: Track;
@@ -55,6 +62,9 @@ export type PartyRoomState = {
   participants: ParticipantState[];
   inviteCode?: string;
   hostDisconnectedAtMs?: number;
+  createdAtMs?: number;
+  lastActivityAtMs?: number;
+  expiresAtMs?: number;
 };
 
 export type LocalPlaybackState = {
@@ -133,6 +143,11 @@ export type ConnectionTicketResponse = {
 export type ResolveCodeResponse = {
   roomId: string;
   inviteCode: string;
+};
+
+export type PendingInvite = {
+  inviteCode: string;
+  receivedAtMs: number;
 };
 
 export type ClientMessage =
@@ -226,6 +241,16 @@ export type ExtensionRequest =
       type: "party.getState";
     }
   | {
+      type: "party.prepareInvite";
+      inviteCode: string;
+    }
+  | {
+      type: "party.getPendingInvite";
+    }
+  | {
+      type: "party.clearPendingInvite";
+    }
+  | {
       type: "party.joinPlayback";
     }
   | {
@@ -284,7 +309,14 @@ export type ExtensionResponse<T = unknown> =
 export function isTrack(value: unknown): value is Track {
   if (!value || typeof value !== "object") return false;
   const track = value as Track;
-  return typeof track.videoId === "string" && track.videoId.length > 0;
+  return (
+    isBoundedString(track.videoId, trackFieldLimits.videoId, true) &&
+    isBoundedOptionalString(track.title, trackFieldLimits.title) &&
+    isBoundedOptionalString(track.artist, trackFieldLimits.artist) &&
+    isBoundedOptionalString(track.thumbnailUrl, trackFieldLimits.thumbnailUrl) &&
+    (track.durationSeconds === undefined ||
+      (isFiniteNumber(track.durationSeconds) && track.durationSeconds >= 0))
+  );
 }
 
 export function isRoomPermissions(value: unknown): value is RoomPermissions {
@@ -403,4 +435,20 @@ function isRevision(value: unknown): value is number {
 
 function isOperationId(value: unknown): value is string {
   return typeof value === "string" && value.length > 0 && value.length <= 128;
+}
+
+function isBoundedString(
+  value: unknown,
+  maxLength: number,
+  requireContent: boolean,
+): value is string {
+  if (typeof value !== "string" || value.length > maxLength) return false;
+  return !requireContent || value.length > 0;
+}
+
+function isBoundedOptionalString(
+  value: unknown,
+  maxLength: number,
+): value is string | undefined {
+  return value === undefined || isBoundedString(value, maxLength, false);
 }

@@ -8,14 +8,13 @@ import type { PlaybackApplicationResult } from "./playback-application";
 import { loadTrack, waitForMedia } from "./youtube-music/navigation";
 import {
   findMediaElement,
-  findTrackFromTarget,
+  inspectSelectorCoverage,
   readCurrentTrack,
   readPlaybackState,
 } from "./youtube-music/selectors";
 
 type Listener = (event: LocalPlaybackEvent) => void;
 
-let lastContextTrack: Track | null = null;
 let lastVideoId: string | null = null;
 let lastInterruption: LocalPlaybackState["interruption"];
 let suppressLocalEventsUntilMs = 0;
@@ -108,34 +107,21 @@ export function observePlayback(listener: Listener): () => void {
   };
 }
 
-export function installContextSongCapture(): void {
-  document.addEventListener(
-    "contextmenu",
-    (event) => {
-      lastContextTrack = findTrackFromTarget(event.target);
-    },
-    true,
-  );
-}
-
-export function takeLastContextTrack(): Track | null {
-  const track = lastContextTrack;
-  lastContextTrack = null;
-  return track;
-}
-
-export function getAdapterDiagnostics(): Record<string, unknown> {
+export function getAdapterDiagnostics(
+  selectedTrack: Track | null = null,
+): Record<string, unknown> {
   const media = findMediaElement();
   return {
     href: location.href,
     currentTrack: readCurrentTrack(),
-    lastContextTrack,
+    lastContextTrack: selectedTrack,
     playback: readPlaybackState(),
     mediaReadyState: media?.readyState ?? null,
     mediaNetworkState: media?.networkState ?? null,
     suppressingLocalEvents: Date.now() < suppressLocalEventsUntilMs,
     lastVideoId,
     lastInterruption,
+    selectorCoverage: inspectSelectorCoverage(),
   };
 }
 

@@ -7,12 +7,21 @@ import {
   type ResolveCodeResponse,
   emptyPlayback,
 } from "@ytm-party/shared";
-import { inviteLandingPage, jsonResponse, parseJson } from "./lib/http";
+import { jsonResponse, parseJson } from "./lib/http";
+import {
+  expiredInvitePage,
+  inviteLandingPage,
+} from "./lib/invite-page";
 import { generateId, generateInviteCode, generateToken } from "./lib/ids";
 import { enforceRateLimit } from "./lib/rate-limit";
+import {
+  normalizeDisplayName,
+  readRoomLimits,
+} from "./domain/room-limits";
 import type { Env } from "./types";
+import { readPositiveInteger } from "./lib/config";
 
-const INVITE_TTL_SECONDS = 60 * 60 * 24;
+const DEFAULT_INVITE_TTL_SECONDS = 60 * 60 * 24;
 
 export const apiWorker = {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -25,6 +34,8 @@ export const apiWorker = {
     if (request.method === "GET" && url.pathname.startsWith("/join/")) {
       const inviteCode = url.pathname.split("/").at(-1)?.toUpperCase();
       if (!inviteCode) return new Response("Missing invite code", { status: 400 });
+      const roomId = await env.INVITES.get(inviteCode);
+      if (!roomId) return expiredInvitePage();
       return inviteLandingPage(inviteCode);
     }
 
@@ -81,6 +92,15 @@ export const apiWorker = {
 
 async function createRoom(request: Request, env: Env): Promise<Response> {
   const body = await parseJson<CreateRoomRequest>(request);
+  const limits = readRoomLimits(env);
+  const displayName = normalizeDisplayName(
+    body.displayName,
+    "Host",
+    limits.maxDisplayNameLength,
+  );
+  if (!displayName) {
+    return jsonResponse({ error: "Display name is invalid" }, { status: 400 });
+  }
   const roomId = generateId("room");
   const participantId = generateId("participant");
   const participantToken = generateToken();
@@ -96,14 +116,17 @@ async function createRoom(request: Request, env: Env): Promise<Response> {
       inviteCode,
       participantId,
       participantToken,
-      displayName: body.displayName || "Host",
+      displayName,
       initialPlayback: body.initialPlayback ?? emptyPlayback(nowMs),
       nowMs,
     }),
   });
 
   await env.INVITES.put(inviteCode, roomId, {
-    expirationTtl: INVITE_TTL_SECONDS,
+    expirationTtl: readPositiveInteger(
+      env.INVITE_TTL_SECONDS,
+      DEFAULT_INVITE_TTL_SECONDS,
+    ),
   });
 
   const origin = new URL(request.url).origin;
@@ -140,7 +163,10 @@ async function joinRoom(request: Request, env: Env): Promise<Response> {
     }),
   });
 
-  if (!joinResponse.ok) return joinResponse;
+  if (!joinResponse.ok) {
+    if (joinResponse.status === 410) await env.INVITES.delete(inviteCode);
+    return joinResponse;
+  }
   const response = (await joinResponse.json()) as JoinRoomResponse;
   return jsonResponse(response, { status: 201 });
 }
@@ -184,7 +210,6 @@ async function createConnectionTicket(
     body: JSON.stringify({
       participantId: body.participantId,
       participantToken,
-      displayName: body.displayName || "Listener",
       nowMs: Date.now(),
     }),
   });

@@ -20,6 +20,7 @@ class FakeConnection implements PartyConnection {
   clockOffsetMs = 0;
   sent: ClientMessage[] = [];
   private snapshotListener: ((state: PartyRoomState) => void) | null = null;
+  private connectionStateListener: ((state: ConnectionState) => void) | null = null;
 
   connect(): void {}
 
@@ -37,8 +38,11 @@ class FakeConnection implements PartyConnection {
   }
 
   onConnectionState(listener: (state: ConnectionState) => void): () => void {
+    this.connectionStateListener = listener;
     listener("connected");
-    return () => undefined;
+    return () => {
+      this.connectionStateListener = null;
+    };
   }
 
   send(message: ClientMessage): void {
@@ -57,6 +61,10 @@ class FakeConnection implements PartyConnection {
 
   emitSnapshot(state: PartyRoomState): void {
     this.snapshotListener?.(state);
+  }
+
+  emitConnectionState(state: ConnectionState): void {
+    this.connectionStateListener?.(state);
   }
 }
 
@@ -229,5 +237,19 @@ describe("party controller orchestration", () => {
     await Promise.resolve();
 
     expect(tabs.applied.at(-1)?.track?.videoId).toBe("next-track");
+  });
+
+  it("clears an expired room instead of reconnecting forever", async () => {
+    const { controller, connection } = await createGuestController();
+
+    connection.emitConnectionState("expired");
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(controller.getView()).toMatchObject({
+      roomId: null,
+      localSyncStatus: "not_joined",
+      lastError: "This party has expired. Create or join another party.",
+    });
   });
 });

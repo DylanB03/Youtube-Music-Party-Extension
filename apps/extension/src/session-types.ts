@@ -16,7 +16,12 @@ export type PartyConnection = {
   sendOperation(message: MutationMessage): Promise<OperationResult>;
 };
 
-export type ConnectionState = "connecting" | "connected" | "reconnecting" | "closed";
+export type ConnectionState =
+  | "connecting"
+  | "connected"
+  | "reconnecting"
+  | "closed"
+  | "expired";
 
 export type MutationMessage = Extract<ClientMessage, { operationId: string }>;
 export type OperationResult = Extract<ServerMessage, { type: "operation.result" }>;

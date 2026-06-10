@@ -4,11 +4,17 @@ import { browser } from "../src/browser";
 import { error, ok } from "../src/extension-messaging";
 import { PartyApi } from "../src/party-api";
 import { PartyClient } from "../src/party-client";
+import {
+  registerPartyContextMenu,
+  updatePartyContextMenu,
+} from "../src/party-context-menu";
 import { PartyController } from "../src/party-controller";
+import { PendingInviteStorage } from "../src/pending-invite-storage";
 import { SessionStorage } from "../src/session-storage";
 import { YouTubeMusicTabGateway } from "../src/tab-gateway";
 
 const partyApi = new PartyApi();
+const pendingInvites = new PendingInviteStorage();
 
 const controller = new PartyController(
   partyApi,
@@ -28,6 +34,7 @@ const controller = new PartyController(
       },
     ),
   (state) => {
+    void updatePartyContextMenu(state);
     void browser.runtime
       .sendMessage({
         type: "party.stateChanged",
@@ -40,8 +47,8 @@ const controller = new PartyController(
 export default defineBackground(() => {
   void initializeBackground();
 
-  browser.runtime.onMessage.addListener((message: ExtensionRequest, _sender, sendResponse) => {
-    void handleMessage(message)
+  browser.runtime.onMessage.addListener((message: ExtensionRequest, sender, sendResponse) => {
+    void handleMessage(message, sender)
       .then((data) => sendResponse(ok(data)))
       .catch((caught: Error) => sendResponse(error(caught.message)));
     return true;
@@ -53,24 +60,18 @@ export default defineBackground(() => {
 });
 
 async function initializeBackground(): Promise<void> {
-  await browser.contextMenus.removeAll();
-  browser.contextMenus.create({
-    id: "add-to-party-queue",
-    title: "Add to party queue",
-    contexts: ["link", "page", "selection"],
-    documentUrlPatterns: ["https://music.youtube.com/*"],
-  });
-  browser.contextMenus.onClicked.addListener((info, tab) => {
-    if (info.menuItemId === "add-to-party-queue") {
-      void controller.addContextSong(tab?.id).catch(() => undefined);
-    }
+  await registerPartyContextMenu(async (tabId) => {
+    await controller.addContextSong(tabId);
   });
 
   await browser.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
   await controller.initialize();
 }
 
-async function handleMessage(message: ExtensionRequest): Promise<unknown> {
+async function handleMessage(
+  message: ExtensionRequest,
+  sender?: chrome.runtime.MessageSender,
+): Promise<unknown> {
   switch (message.type) {
     case "party.create":
       return controller.createParty(message.displayName);
@@ -83,6 +84,25 @@ async function handleMessage(message: ExtensionRequest): Promise<unknown> {
 
     case "party.getState":
       return controller.getView();
+
+    case "party.prepareInvite": {
+      const panelOpen = sender?.tab?.id
+        ? browser.sidePanel.open({ tabId: sender.tab.id }).catch(() => undefined)
+        : Promise.resolve();
+      const invite = await pendingInvites.save(message.inviteCode);
+      void browser.runtime
+        .sendMessage({ type: "party.pendingInviteChanged", invite })
+        .catch(() => undefined);
+      await panelOpen;
+      return invite;
+    }
+
+    case "party.getPendingInvite":
+      return pendingInvites.load();
+
+    case "party.clearPendingInvite":
+      await pendingInvites.clear();
+      return null;
 
     case "party.joinPlayback":
     case "party.rejoinPlayback":

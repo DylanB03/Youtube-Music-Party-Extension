@@ -53,8 +53,14 @@ export class PartyClient {
     let ticket: string;
     try {
       ticket = await this.requestConnectionTicket();
-    } catch {
+    } catch (error) {
       this.opening = false;
+      if (error instanceof Error && error.name === "PartyExpiredError") {
+        this.intentionallyClosed = true;
+        this.emitError("This party has expired. Create or join another party.");
+        this.emitConnectionState("expired");
+        return;
+      }
       this.emitError("Could not authorize the party connection.");
       this.scheduleReconnect();
       return;
@@ -79,9 +85,15 @@ export class PartyClient {
     });
     this.socket.addEventListener("message", (event) => this.handleMessage(event.data));
     this.socket.addEventListener("error", () => this.emitError("Party connection failed."));
-    this.socket.addEventListener("close", () => {
+    this.socket.addEventListener("close", (event) => {
       this.opening = false;
       this.socket = null;
+      if (event.code === 1001 && event.reason === "Party expired") {
+        this.intentionallyClosed = true;
+        this.emitError("This party has expired. Create or join another party.");
+        this.emitConnectionState("expired");
+        return;
+      }
       if (!this.intentionallyClosed) {
         this.emitError("Party connection closed. Reconnecting...");
         this.scheduleReconnect();

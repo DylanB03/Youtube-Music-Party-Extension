@@ -12,6 +12,7 @@
     "test": "npm run test --workspaces --if-present",
     "test:browser": "npm run build:extension && playwright test",
     "dev:backend": "npm --workspace apps/backend run dev",
+    "dev:backend:e2e": "npm --workspace apps/backend run dev:e2e",
     "dev:extension": "npm --workspace apps/extension run dev",
     "build:backend": "npm --workspace apps/backend run build",
     "build:extension": "npm --workspace apps/extension run build"

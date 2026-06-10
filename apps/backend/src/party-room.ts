@@ -17,13 +17,29 @@ import {
   transferHost,
   upsertConnectedParticipant,
 } from "./domain/room-state";
+import {
+  normalizeDisplayName,
+  readRoomLimits,
+} from "./domain/room-limits";
+import {
+  nextRoomExpirationAtMs,
+  roomShouldExpire,
+  type RoomLifecycle,
+} from "./domain/room-lifecycle";
+import {
+  consumeMessageAllowance,
+  messageSizeBytes,
+} from "./domain/connection-guard";
 import { jsonResponse } from "./lib/http";
 import { generateId, generateToken } from "./lib/ids";
+import { readPositiveInteger } from "./lib/config";
 import type { Env, RoomAuth, SessionMeta } from "./types";
 
-const HOST_RECONNECT_GRACE_MS = 30_000;
+const DEFAULT_HOST_RECONNECT_GRACE_MS = 30_000;
 const PARTICIPANT_RETENTION_MS = 5 * 60_000;
 const CONNECTION_TICKET_TTL_MS = 30_000;
+const DEFAULT_ROOM_MAX_AGE_MS = 24 * 60 * 60 * 1_000;
+const DEFAULT_ROOM_IDLE_TTL_MS = 60 * 60 * 1_000;
 
 export class PartyRoom {
   private sessions = new Map<WebSocket, SessionMeta>();
@@ -59,6 +75,18 @@ export class PartyRoom {
   async alarm(): Promise<void> {
     await this.load();
     if (!this.roomState) return;
+    const nowMs = Date.now();
+    if (
+      roomShouldExpire(
+        this.roomState,
+        this.sessions.size > 0,
+        nowMs,
+        this.getLifecycle(),
+      )
+    ) {
+      await this.expireRoom();
+      return;
+    }
 
     const connectedIds = new Set(
       Array.from(this.sessions.values(), (session) => session.participantId),
@@ -69,7 +97,7 @@ export class PartyRoom {
     const participantsRemoved = removeInactiveParticipants(
       this.roomState,
       connectedIds,
-      Date.now(),
+      nowMs,
       PARTICIPANT_RETENTION_MS,
     );
     if (participantsRemoved) this.removeOrphanedParticipantTokens();
@@ -128,6 +156,9 @@ export class PartyRoom {
       },
       queue: [],
       participants: [host],
+      createdAtMs: body.nowMs,
+      lastActivityAtMs: body.nowMs,
+      expiresAtMs: body.nowMs + this.getLifecycle().maxAgeMs,
     };
     this.roomAuth = {
       participantTokens: {
@@ -138,12 +169,13 @@ export class PartyRoom {
     };
 
     await this.persist();
+    await this.scheduleNextPresenceAlarm();
     return jsonResponse({ ok: true });
   }
 
   private async join(request: Request): Promise<Response> {
     if (!this.roomState || !this.roomAuth) {
-      return jsonResponse({ error: "Room has not been initialized" }, { status: 409 });
+      return jsonResponse({ error: "Party has expired" }, { status: 410 });
     }
 
     const body = await request.json<{
@@ -151,8 +183,20 @@ export class PartyRoom {
       displayName: string;
       nowMs: number;
     }>();
+    const limits = readRoomLimits(this.env);
+    if (this.roomState.participants.length >= limits.maxParticipants) {
+      return jsonResponse({ error: "Party is full" }, { status: 409 });
+    }
     if (body.inviteCode !== this.roomState.inviteCode) {
       return jsonResponse({ error: "Invite code does not match room" }, { status: 403 });
+    }
+    const displayName = normalizeDisplayName(
+      body.displayName,
+      "Guest",
+      limits.maxDisplayNameLength,
+    );
+    if (!displayName) {
+      return jsonResponse({ error: "Display name is invalid" }, { status: 400 });
     }
 
     const participantId = generateId("participant");
@@ -160,13 +204,15 @@ export class PartyRoom {
     this.roomAuth.participantTokens[participantId] = participantToken;
     addParticipant(this.roomState, {
       participantId,
-      displayName: body.displayName || "Guest",
+      displayName,
       role: "guest",
       syncStatus: "ready_to_join",
       connectedAtMs: body.nowMs,
       lastSeenAtMs: body.nowMs,
     });
+    this.roomState.lastActivityAtMs = body.nowMs;
     await this.persist();
+    await this.scheduleNextPresenceAlarm();
 
     const response: JoinRoomResponse = {
       roomId: this.roomState.roomId,
@@ -178,14 +224,13 @@ export class PartyRoom {
   }
 
   private async createConnectionTicket(request: Request): Promise<Response> {
-    if (!this.roomAuth) {
-      return jsonResponse({ error: "Room has not been initialized" }, { status: 409 });
+    if (!this.roomState || !this.roomAuth) {
+      return jsonResponse({ error: "Party has expired" }, { status: 410 });
     }
 
     const body = await request.json<{
       participantId: string;
       participantToken: string;
-      displayName: string;
       nowMs: number;
     }>();
     if (
@@ -193,12 +238,18 @@ export class PartyRoom {
     ) {
       return jsonResponse({ error: "Invalid participant token" }, { status: 401 });
     }
+    const participant = this.roomState.participants.find(
+      (candidate) => candidate.participantId === body.participantId,
+    );
+    if (!participant) {
+      return jsonResponse({ error: "Participant is no longer active" }, { status: 401 });
+    }
 
     const ticket = generateToken();
     const expiresAtMs = body.nowMs + CONNECTION_TICKET_TTL_MS;
     this.roomAuth.connectionTickets[ticket] = {
       participantId: body.participantId,
-      displayName: body.displayName,
+      displayName: participant.displayName,
       expiresAtMs,
     };
     this.removeExpiredTickets(body.nowMs);
@@ -210,7 +261,7 @@ export class PartyRoom {
 
   private async connect(request: Request): Promise<Response> {
     if (!this.roomState || !this.roomAuth) {
-      return jsonResponse({ error: "Room has not been initialized" }, { status: 409 });
+      return jsonResponse({ error: "Party has expired" }, { status: 410 });
     }
     if (request.headers.get("Upgrade") !== "websocket") {
       return jsonResponse({ error: "Expected WebSocket upgrade" }, { status: 426 });
@@ -232,8 +283,16 @@ export class PartyRoom {
     const server = pair[1];
     server.accept();
 
-    this.sessions.set(server, { participantId, displayName });
+    this.sessions.set(server, {
+      participantId,
+      displayName,
+      messageWindowStartedAtMs: Date.now(),
+      messageCount: 0,
+    });
+    this.roomState.lastActivityAtMs = Date.now();
     upsertConnectedParticipant(this.roomState, participantId, displayName, Date.now());
+    await this.persist();
+    await this.scheduleNextPresenceAlarm();
     this.send(server, { type: "room.snapshot", state: this.roomState });
     this.broadcastSnapshot();
 
@@ -256,6 +315,24 @@ export class PartyRoom {
   private async handleMessage(socket: WebSocket, raw: unknown): Promise<void> {
     const session = this.sessions.get(socket);
     if (!session || !this.roomState) return;
+    const limits = readRoomLimits(this.env);
+    if (messageSizeBytes(raw) > limits.maxMessageBytes) {
+      this.sendError(socket, "message_too_large", "Party message is too large.");
+      socket.close(1009, "Message too large");
+      return;
+    }
+    if (
+      !consumeMessageAllowance(
+        session,
+        Date.now(),
+        limits.maxMessagesPerWindow,
+        limits.messageWindowMs,
+      )
+    ) {
+      this.sendError(socket, "rate_limited", "Too many party messages.");
+      socket.close(1008, "Message rate exceeded");
+      return;
+    }
 
     const message = this.parseClientMessage(raw);
     if (!message) {
@@ -282,8 +359,12 @@ export class PartyRoom {
         session.participantId,
         Date.now(),
         () => generateId("queue"),
+        limits,
       );
-      if (result.changed) await this.commitAndBroadcast();
+      if (result.changed) {
+        this.roomState.lastActivityAtMs = Date.now();
+        await this.commitAndBroadcast();
+      }
       return;
     }
 
@@ -299,6 +380,7 @@ export class PartyRoom {
       session.participantId,
       Date.now(),
       () => generateId("queue"),
+      limits,
     );
     if (result.error) {
       const operationResult: Extract<ServerMessage, { type: "operation.result" }> = {
@@ -320,6 +402,7 @@ export class PartyRoom {
       return;
     }
     if (result.changed) {
+      this.roomState.lastActivityAtMs = Date.now();
       this.roomState.revision += 1;
       const operationResult: Extract<ServerMessage, { type: "operation.result" }> = {
         type: "operation.result",
@@ -360,9 +443,16 @@ export class PartyRoom {
       session.participantId,
       Date.now(),
     );
+    if (this.sessions.size === 0) this.roomState.lastActivityAtMs = Date.now();
     await this.commitAndBroadcast();
     await this.scheduleNextPresenceAlarm(
-      hostDisconnected ? Date.now() + HOST_RECONNECT_GRACE_MS : undefined,
+      hostDisconnected
+        ? Date.now() +
+            readPositiveInteger(
+              this.env.HOST_RECONNECT_GRACE_MS,
+              DEFAULT_HOST_RECONNECT_GRACE_MS,
+            )
+        : undefined,
     );
   }
 
@@ -423,9 +513,42 @@ export class PartyRoom {
       .filter((participant) => participant.participantId !== this.roomState?.hostParticipantId)
       .filter((participant) => !connectedIds.has(participant.participantId))
       .map((participant) => participant.lastSeenAtMs + PARTICIPANT_RETENTION_MS);
-    const candidates = preferredTime ? [preferredTime, ...cleanupTimes] : cleanupTimes;
+    const lifecycleExpiration = nextRoomExpirationAtMs(
+      this.roomState,
+      this.sessions.size > 0,
+      this.getLifecycle(),
+    );
+    const candidates = preferredTime
+      ? [preferredTime, lifecycleExpiration, ...cleanupTimes]
+      : [lifecycleExpiration, ...cleanupTimes];
     if (candidates.length === 0) return;
     await this.state.storage.setAlarm(Math.min(...candidates));
+  }
+
+  private getLifecycle(): RoomLifecycle {
+    return {
+      maxAgeMs: readPositiveInteger(
+        this.env.ROOM_MAX_AGE_MS,
+        DEFAULT_ROOM_MAX_AGE_MS,
+      ),
+      idleTtlMs: readPositiveInteger(
+        this.env.ROOM_IDLE_TTL_MS,
+        DEFAULT_ROOM_IDLE_TTL_MS,
+      ),
+    };
+  }
+
+  private async expireRoom(): Promise<void> {
+    const inviteCode = this.roomState?.inviteCode;
+    for (const socket of this.sessions.keys()) {
+      socket.close(1001, "Party expired");
+    }
+    this.sessions.clear();
+    const cleanupTasks: Promise<unknown>[] = [this.state.storage.deleteAll()];
+    if (inviteCode) cleanupTasks.push(this.env.INVITES.delete(inviteCode));
+    await Promise.all(cleanupTasks);
+    this.roomState = null;
+    this.roomAuth = null;
   }
 
   private broadcastSnapshot(): void {

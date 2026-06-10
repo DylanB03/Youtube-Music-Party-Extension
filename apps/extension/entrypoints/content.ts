@@ -5,17 +5,46 @@ import {
   applyPlayback,
   getAdapterDiagnostics,
   getPlaybackState,
-  installContextSongCapture,
   observePlayback,
-  takeLastContextTrack,
 } from "../src/youtube-music-adapter";
+import { installPartyMenuIntegration } from "../src/youtube-music/party-menu";
+import {
+  installTrackSelectionCapture,
+  TrackSelectionStore,
+} from "../src/youtube-music/track-selection";
+import {
+  readInviteCodeFromLocation,
+  removeInviteCodeFromLocation,
+} from "../src/youtube-music/invite-link";
+import { installInvitePrompt } from "../src/youtube-music/invite-prompt";
+
+const trackSelection = new TrackSelectionStore();
 
 export default defineContentScript({
   matches: ["https://music.youtube.com/*"],
   main() {
-    installContextSongCapture();
+    installTrackSelectionCapture(trackSelection);
+    installPartyMenuIntegration(trackSelection);
+    const inviteCode = readInviteCodeFromLocation(location.href);
+    if (inviteCode) {
+      installInvitePrompt({
+        inviteCode,
+        prepareInvite: () =>
+          browser.runtime.sendMessage({
+            type: "party.prepareInvite",
+            inviteCode,
+          } satisfies ExtensionRequest),
+        onComplete: () => {
+          history.replaceState(
+            history.state,
+            "",
+            removeInviteCodeFromLocation(location.href),
+          );
+        },
+      });
+    }
     Object.assign(window, {
-      __ytmPartyDiagnostics: getAdapterDiagnostics,
+      __ytmPartyDiagnostics: () => getAdapterDiagnostics(trackSelection.peek()),
     });
     observePlayback((event) => {
       void browser.runtime.sendMessage({
@@ -46,10 +75,10 @@ async function handleMessage(message: ExtensionRequest): Promise<unknown> {
       return applyPlayback(message.playback);
 
     case "content.getContextSong":
-      return takeLastContextTrack();
+      return trackSelection.take();
 
     case "content.getDiagnostics":
-      return getAdapterDiagnostics();
+      return getAdapterDiagnostics(trackSelection.peek());
 
     default:
       return null;

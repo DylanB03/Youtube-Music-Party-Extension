@@ -5,6 +5,7 @@ import {
   type QueueItem,
   type Track,
 } from "@ytm-party/shared";
+import type { RoomLimits } from "./room-limits";
 
 export type RoomMutationError = {
   code: string;
@@ -25,6 +26,7 @@ export function applyRoomMutation(
   participantId: string,
   nowMs: number,
   createQueueId: QueueIdFactory,
+  limits?: Pick<RoomLimits, "maxQueueItems">,
 ): RoomMutationResult {
   touchParticipant(state, participantId, nowMs);
 
@@ -82,6 +84,15 @@ export function applyRoomMutation(
           error: {
             code: "forbidden",
             message: "Guests cannot add songs unless the host enables guest queue additions.",
+          },
+        };
+      }
+      if (limits && state.queue.length >= limits.maxQueueItems) {
+        return {
+          changed: false,
+          error: {
+            code: "queue_full",
+            message: "The party queue is full.",
           },
         };
       }

@@ -6,7 +6,11 @@ export default defineConfig({
     name: "YouTube Music Party",
     description: "Create shared listening parties on YouTube Music.",
     permissions: ["contextMenus", "sidePanel", "storage", "tabs"],
-    host_permissions: ["https://music.youtube.com/*"],
+    host_permissions: [
+      "https://music.youtube.com/*",
+      "http://localhost:8787/*",
+      "https://*.workers.dev/*",
+    ],
     commands: {
       "rejoin-playback": {
         suggested_key: {

@@ -43,4 +43,6 @@ npx playwright install chromium
 npm run test:browser
 ```
 
+The browser command builds the extension, starts an isolated local Wrangler backend, runs two-client room flows, validates selector fixtures on the YouTube Music origin, and checks extension loading.
+
 The extension defaults to `http://localhost:8787` for the backend. Override with `WXT_PUBLIC_PARTY_API_BASE_URL` if needed.

@@ -95,13 +95,35 @@ input {
 }
 
 .notice {
+  border: 0;
   border-radius: 0.9rem;
+  font-size: 0.9rem;
   padding: 0.75rem;
+  text-align: left;
+  width: 100%;
 }
 
 .error {
   background: #ffe1d8;
   color: #7b1e16;
+}
+
+.success {
+  background: #dff4df;
+  color: #245c2a;
+}
+
+.warning {
+  background: #fff0bd;
+  color: #704d00;
+}
+
+.quiet {
+  background: transparent;
+  color: #7b2d18;
+  margin-top: 0.75rem;
+  padding-left: 0;
+  padding-right: 0;
 }
 
 .join-row,
@@ -111,6 +133,26 @@ input {
   display: flex;
   gap: 0.6rem;
   justify-content: space-between;
+}
+
+.prepared-invite {
+  align-items: center;
+  border-radius: 0.9rem;
+  background: #fff0bd;
+  color: #704d00;
+  display: flex;
+  justify-content: space-between;
+  padding: 0.7rem;
+}
+
+.prepared-invite strong {
+  font-family: "Space Mono", monospace;
+  letter-spacing: 0.12em;
+}
+
+.quiet.compact {
+  margin: 0;
+  padding: 0.25rem;
 }
 
 .invite-code {

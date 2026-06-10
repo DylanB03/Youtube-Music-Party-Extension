@@ -48,6 +48,7 @@ type ConnectionFactory = (credentials: StoredSession) => PartyConnection;
 
 export class PartyController {
   private session: ActiveSession | null = null;
+  private terminalError: string | undefined;
   private mutationRevision = 0;
   private mutationChain: Promise<void> = Promise.resolve();
 
@@ -66,6 +67,7 @@ export class PartyController {
   }
 
   async createParty(displayName: string): Promise<SessionView> {
+    this.terminalError = undefined;
     const local = await this.tabs.getPlayback();
     const initialPlayback: PartyPlaybackState = {
       track: local.track,
@@ -85,6 +87,7 @@ export class PartyController {
   }
 
   async joinParty(inviteCode: string, displayName: string): Promise<SessionView> {
+    this.terminalError = undefined;
     const joined = await this.api.joinRoom(inviteCode, displayName);
     await this.connect({
       roomId: joined.roomId,
@@ -99,6 +102,7 @@ export class PartyController {
   async leaveParty(): Promise<SessionView> {
     this.session?.client.disconnect();
     this.session = null;
+    this.terminalError = undefined;
     this.mutationRevision = 0;
     this.mutationChain = Promise.resolve();
     await this.storage.clear();
@@ -203,7 +207,7 @@ export class PartyController {
       displayName: this.session?.displayName ?? null,
       localSyncStatus: this.session?.localSyncStatus ?? "not_joined",
       state: this.session?.state ?? null,
-      lastError: this.session?.lastError,
+      lastError: this.session?.lastError ?? this.terminalError,
     };
   }
 
@@ -282,10 +286,21 @@ export class PartyController {
   }
 
   private async handleConnectionState(
-    state: "connecting" | "connected" | "reconnecting" | "closed",
+    state: "connecting" | "connected" | "reconnecting" | "closed" | "expired",
   ): Promise<void> {
     const session = this.session;
     if (!session) return;
+
+    if (state === "expired") {
+      session.client.disconnect();
+      this.session = null;
+      this.mutationRevision = 0;
+      this.mutationChain = Promise.resolve();
+      this.terminalError = "This party has expired. Create or join another party.";
+      await this.storage.clear();
+      this.publishState();
+      return;
+    }
 
     if (state === "reconnecting") {
       if (session.localSyncStatus !== "reconnecting") {

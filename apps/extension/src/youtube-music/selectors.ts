@@ -2,8 +2,18 @@ import type { LocalPlaybackState, Track } from "@ytm-party/shared";
 
 const SONG_ROW_SELECTOR = [
   "ytmusic-responsive-list-item-renderer",
-  "ytmusic-shelf-renderer",
   "ytmusic-two-row-item-renderer",
+  "ytmusic-player-queue-item",
+  "ytmusic-playlist-shelf-renderer",
+].join(", ");
+
+const MENU_TRIGGER_SELECTOR = [
+  'button[aria-haspopup="true"]',
+  'button[aria-label*="More"]',
+  'button[title*="More"]',
+  'tp-yt-paper-icon-button[aria-label*="More"]',
+  'yt-button-shape[aria-label*="More"]',
+  ".dropdown-trigger",
 ].join(", ");
 
 const AD_SELECTOR = [
@@ -53,30 +63,73 @@ export function readPlaybackState(): LocalPlaybackState {
 
 export function findTrackFromTarget(target: EventTarget | null): Track | null {
   const element = target instanceof Element ? target : null;
-  const link = element?.closest<HTMLAnchorElement>('a[href*="watch?v="]');
-  if (!link) return null;
-
-  const videoId = new URL(link.href).searchParams.get("v");
+  const row = element?.closest<HTMLElement>(SONG_ROW_SELECTOR);
+  const link =
+    element?.closest<HTMLAnchorElement>('a[href*="watch?v="]') ??
+    row?.querySelector<HTMLAnchorElement>('a[href*="watch?v="]');
+  const videoId =
+    readVideoIdFromLink(link) ??
+    row?.dataset.videoId ??
+    row?.querySelector<HTMLElement>("[data-video-id]")?.dataset.videoId;
   if (!videoId) return null;
 
-  const row = link.closest<HTMLElement>(SONG_ROW_SELECTOR);
+  const trackRow = row ?? link?.closest<HTMLElement>(SONG_ROW_SELECTOR);
   const title =
-    row?.querySelector<HTMLElement>(".title, yt-formatted-string.title")?.innerText.trim() ||
-    link.textContent?.trim() ||
+    trackRow
+      ?.querySelector<HTMLElement>(".title, yt-formatted-string.title")
+      ?.innerText.trim() ||
+    link?.textContent?.trim() ||
     undefined;
   const artist =
-    row?.querySelector<HTMLElement>(".secondary-flex-columns, .subtitle")?.textContent?.trim() ||
+    trackRow
+      ?.querySelector<HTMLElement>(".secondary-flex-columns, .subtitle")
+      ?.textContent?.trim() ||
     undefined;
   return { videoId, title, artist };
+}
+
+export function isSongMenuTrigger(target: EventTarget | null): boolean {
+  const element = target instanceof Element ? target : null;
+  const trigger = element?.closest<HTMLElement>(MENU_TRIGGER_SELECTOR);
+  if (!trigger) return false;
+
+  const label = `${trigger.getAttribute("aria-label") ?? ""} ${
+    trigger.getAttribute("title") ?? ""
+  }`.toLowerCase();
+  return (
+    label.includes("more") ||
+    trigger.matches('[aria-haspopup="true"], .dropdown-trigger')
+  );
 }
 
 export function findTrackLink(videoId: string): HTMLAnchorElement | null {
   const links = document.querySelectorAll<HTMLAnchorElement>('a[href*="watch?v="]');
   for (const link of links) {
-    const candidateId = new URL(link.href).searchParams.get("v");
+    const candidateId = readVideoIdFromLink(link);
     if (candidateId === videoId) return link;
   }
   return null;
+}
+
+export function inspectSelectorCoverage(): Record<string, number> {
+  return {
+    songRows: document.querySelectorAll(SONG_ROW_SELECTOR).length,
+    watchLinks: document.querySelectorAll('a[href*="watch?v="]').length,
+    menuTriggers: document.querySelectorAll(MENU_TRIGGER_SELECTOR).length,
+    advertisements: document.querySelectorAll(AD_SELECTOR).length,
+    unavailableStates: document.querySelectorAll(UNAVAILABLE_SELECTOR).length,
+  };
+}
+
+function readVideoIdFromLink(
+  link: HTMLAnchorElement | null | undefined,
+): string | null {
+  if (!link) return null;
+  try {
+    return new URL(link.href, location.href).searchParams.get("v");
+  } catch {
+    return null;
+  }
 }
 
 function detectInterruption(

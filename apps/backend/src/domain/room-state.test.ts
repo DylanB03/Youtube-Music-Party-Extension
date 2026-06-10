@@ -265,4 +265,34 @@ describe("party room mutations", () => {
       "active-guest",
     ]);
   });
+
+  it("rejects additions when the configured queue limit is reached", () => {
+    const state = createRoomState();
+    state.queue.push({
+      id: "existing",
+      track: { videoId: "existing-track" },
+      addedByParticipantId: "host",
+      addedAtMs: 1_000,
+    });
+
+    const result = applyRoomMutation(
+      state,
+      {
+        type: "queue.add",
+        operationId: "full-queue-add",
+        track: { videoId: "another-track" },
+        expectedRevision: 4,
+      },
+      "host",
+      2_000,
+      () => "new-item",
+      { maxQueueItems: 1 },
+    );
+
+    expect(result.error).toEqual({
+      code: "queue_full",
+      message: "The party queue is full.",
+    });
+    expect(state.queue).toHaveLength(1);
+  });
 });

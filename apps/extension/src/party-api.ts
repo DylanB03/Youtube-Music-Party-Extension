@@ -16,7 +16,9 @@ export class PartyApi {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ displayName, initialPlayback }),
     });
-    if (!response.ok) throw new Error("Could not create party.");
+    if (!response.ok) {
+      throw new Error(await readApiError(response, "Could not create party."));
+    }
     return response.json() as Promise<CreateRoomResponse>;
   }
 
@@ -26,7 +28,9 @@ export class PartyApi {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ inviteCode, displayName }),
     });
-    if (!response.ok) throw new Error("Invite code not found.");
+    if (!response.ok) {
+      throw new Error(await readApiError(response, "Could not join party."));
+    }
     return response.json() as Promise<JoinRoomResponse>;
   }
 
@@ -44,7 +48,33 @@ export class PartyApi {
       },
       body: JSON.stringify({ participantId, displayName }),
     });
-    if (!response.ok) throw new Error("Could not authorize the party connection.");
+    if (!response.ok) {
+      const message = await readApiError(
+        response,
+        "Could not authorize the party connection.",
+      );
+      if (response.status === 404 || response.status === 409 || response.status === 410) {
+        throw new PartyExpiredError(message);
+      }
+      throw new Error(message);
+    }
     return response.json() as Promise<ConnectionTicketResponse>;
   }
+}
+
+export class PartyExpiredError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "PartyExpiredError";
+  }
+}
+
+async function readApiError(response: Response, fallback: string): Promise<string> {
+  try {
+    const body = (await response.json()) as { error?: unknown };
+    if (typeof body.error === "string" && body.error) return body.error;
+  } catch {
+    return fallback;
+  }
+  return fallback;
 }
