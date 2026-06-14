@@ -1,10 +1,11 @@
 import {
   type ClientMessage,
   type PartyRoomState,
-  type ServerMessage,
   estimateClockOffsetMs,
 } from "@ytm-party/shared";
 import { wsUrl } from "./config";
+import { PendingOperationRegistry } from "./pending-operations";
+import { parseServerMessage } from "./server-message";
 import type {
   ConnectionState,
   MutationMessage,
@@ -14,6 +15,7 @@ import type {
 type Listener = (state: PartyRoomState) => void;
 type ErrorListener = (message: string) => void;
 type ConnectionStateListener = (state: ConnectionState) => void;
+const OPERATION_TIMEOUT_MS = 15_000;
 
 export class PartyClient {
   private socket: WebSocket | null = null;
@@ -21,14 +23,7 @@ export class PartyClient {
   private listeners = new Set<Listener>();
   private errorListeners = new Set<ErrorListener>();
   private connectionStateListeners = new Set<ConnectionStateListener>();
-  private pendingOperations = new Map<
-    string,
-    {
-      message: MutationMessage;
-      resolve: (result: OperationResult) => void;
-      reject: (error: Error) => void;
-    }
-  >();
+  private pendingOperations: PendingOperationRegistry;
   private pendingMessages: ClientMessage[] = [];
   private intentionallyClosed = false;
   private reconnectAttempt = 0;
@@ -39,7 +34,15 @@ export class PartyClient {
   constructor(
     private readonly roomId: string,
     private readonly requestConnectionTicket: () => Promise<string>,
-  ) {}
+  ) {
+    this.pendingOperations = new PendingOperationRegistry(
+      OPERATION_TIMEOUT_MS,
+      () => {
+        this.emitError("A party action timed out. Refreshing the room state...");
+        this.send({ type: "room.snapshot.request" });
+      },
+    );
+  }
 
   connect(): void {
     if (this.opening || (this.socket && this.socket.readyState <= WebSocket.OPEN)) return;
@@ -109,10 +112,7 @@ export class PartyClient {
     this.socket?.close();
     this.socket = null;
     this.pendingMessages = [];
-    for (const pending of this.pendingOperations.values()) {
-      pending.reject(new Error("Party connection was closed."));
-    }
-    this.pendingOperations.clear();
+    this.pendingOperations.rejectAll(new Error("Party connection was closed."));
     this.emitConnectionState("closed");
   }
 
@@ -141,9 +141,7 @@ export class PartyClient {
   }
 
   async sendOperation(message: MutationMessage): Promise<OperationResult> {
-    const result = new Promise<OperationResult>((resolve, reject) => {
-      this.pendingOperations.set(message.operationId, { message, resolve, reject });
-    });
+    const result = this.pendingOperations.create(message);
     if (this.socket?.readyState === WebSocket.OPEN) {
       this.socket.send(JSON.stringify(message));
     }
@@ -151,7 +149,12 @@ export class PartyClient {
   }
 
   private handleMessage(raw: unknown): void {
-    const message = JSON.parse(String(raw)) as ServerMessage;
+    const message = parseServerMessage(raw);
+    if (!message) {
+      this.emitError("The party sent an invalid message. Reconnecting...");
+      this.socket?.close(1002, "Invalid party protocol message");
+      return;
+    }
 
     if (message.type === "room.snapshot") {
       this.latestState = message.state;
@@ -165,10 +168,7 @@ export class PartyClient {
     }
 
     if (message.type === "operation.result") {
-      const pending = this.pendingOperations.get(message.operationId);
-      if (!pending) return;
-      this.pendingOperations.delete(message.operationId);
-      pending.resolve(message);
+      this.pendingOperations.resolve(message);
       return;
     }
 
@@ -202,9 +202,9 @@ export class PartyClient {
 
   private resendPendingOperations(): void {
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN) return;
-    for (const pending of this.pendingOperations.values()) {
-      this.socket.send(JSON.stringify(pending.message));
-    }
+    this.pendingOperations.resend((message) => {
+      this.socket?.send(JSON.stringify(message));
+    });
   }
 
   private flushPendingMessages(): void {

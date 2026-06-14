@@ -2,6 +2,7 @@ import { defineBackground } from "wxt/utils/define-background";
 import type { ExtensionRequest } from "@ytm-party/shared";
 import { browser } from "../src/browser";
 import { error, ok } from "../src/extension-messaging";
+import { preparePendingInvite } from "../src/invite-coordinator";
 import { PartyApi } from "../src/party-api";
 import { PartyClient } from "../src/party-client";
 import {
@@ -86,15 +87,20 @@ async function handleMessage(
       return controller.getView();
 
     case "party.prepareInvite": {
-      const panelOpen = sender?.tab?.id
-        ? browser.sidePanel.open({ tabId: sender.tab.id }).catch(() => undefined)
-        : Promise.resolve();
-      const invite = await pendingInvites.save(message.inviteCode);
-      void browser.runtime
-        .sendMessage({ type: "party.pendingInviteChanged", invite })
-        .catch(() => undefined);
-      await panelOpen;
-      return invite;
+      return preparePendingInvite({
+        inviteCode: message.inviteCode,
+        storage: pendingInvites,
+        openPanel: async () => {
+          if (sender?.tab?.id) {
+            await browser.sidePanel.open({ tabId: sender.tab.id });
+          }
+        },
+        notifyPrepared: (invite) => {
+          void browser.runtime
+            .sendMessage({ type: "party.pendingInviteChanged", invite })
+            .catch(() => undefined);
+        },
+      });
     }
 
     case "party.getPendingInvite":

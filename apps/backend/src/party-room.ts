@@ -1,17 +1,13 @@
 import {
-  type ClientMessage,
-  type ConnectionTicketResponse,
   type JoinRoomResponse,
   type ParticipantState,
   type PartyPlaybackState,
   type PartyRoomState,
   type ServerMessage,
   defaultPermissions,
-  isClientMessage,
 } from "@ytm-party/shared";
 import {
   addParticipant,
-  applyRoomMutation,
   markParticipantDisconnected,
   removeInactiveParticipants,
   transferHost,
@@ -22,18 +18,22 @@ import {
   readRoomLimits,
 } from "./domain/room-limits";
 import {
-  nextRoomExpirationAtMs,
   roomShouldExpire,
   type RoomLifecycle,
 } from "./domain/room-lifecycle";
 import {
-  consumeMessageAllowance,
-  messageSizeBytes,
-} from "./domain/connection-guard";
+  consumeConnectionTicket,
+  createRoomAuth,
+  issueConnectionTicket,
+  removeOrphanedParticipantTokens,
+} from "./domain/room-auth";
+import { RoomConnections } from "./domain/room-connections";
+import { processRoomMessage } from "./domain/room-message-processor";
+import { nextPresenceAlarmAtMs } from "./domain/room-presence";
 import { jsonResponse } from "./lib/http";
 import { generateId, generateToken } from "./lib/ids";
 import { readPositiveInteger } from "./lib/config";
-import type { Env, RoomAuth, SessionMeta } from "./types";
+import type { Env, RoomAuth } from "./types";
 
 const DEFAULT_HOST_RECONNECT_GRACE_MS = 30_000;
 const PARTICIPANT_RETENTION_MS = 5 * 60_000;
@@ -42,7 +42,7 @@ const DEFAULT_ROOM_MAX_AGE_MS = 24 * 60 * 60 * 1_000;
 const DEFAULT_ROOM_IDLE_TTL_MS = 60 * 60 * 1_000;
 
 export class PartyRoom {
-  private sessions = new Map<WebSocket, SessionMeta>();
+  private connections = new RoomConnections();
   private roomState: PartyRoomState | null = null;
   private roomAuth: RoomAuth | null = null;
   private loaded = false;
@@ -79,7 +79,7 @@ export class PartyRoom {
     if (
       roomShouldExpire(
         this.roomState,
-        this.sessions.size > 0,
+        this.connections.size > 0,
         nowMs,
         this.getLifecycle(),
       )
@@ -88,9 +88,7 @@ export class PartyRoom {
       return;
     }
 
-    const connectedIds = new Set(
-      Array.from(this.sessions.values(), (session) => session.participantId),
-    );
+    const connectedIds = this.connections.participantIds();
     const hostChanged = this.roomState.hostDisconnectedAtMs
       ? transferHost(this.roomState, connectedIds)
       : false;
@@ -160,13 +158,7 @@ export class PartyRoom {
       lastActivityAtMs: body.nowMs,
       expiresAtMs: body.nowMs + this.getLifecycle().maxAgeMs,
     };
-    this.roomAuth = {
-      participantTokens: {
-        [body.participantId]: body.participantToken,
-      },
-      connectionTickets: {},
-      operationResults: {},
-    };
+    this.roomAuth = createRoomAuth(body.participantId, body.participantToken);
 
     await this.persist();
     await this.scheduleNextPresenceAlarm();
@@ -233,9 +225,8 @@ export class PartyRoom {
       participantToken: string;
       nowMs: number;
     }>();
-    if (
-      this.roomAuth.participantTokens[body.participantId] !== body.participantToken
-    ) {
+    const storedToken = this.roomAuth.participantTokens[body.participantId];
+    if (storedToken !== body.participantToken) {
       return jsonResponse({ error: "Invalid participant token" }, { status: 401 });
     }
     const participant = this.roomState.participants.find(
@@ -245,17 +236,14 @@ export class PartyRoom {
       return jsonResponse({ error: "Participant is no longer active" }, { status: 401 });
     }
 
-    const ticket = generateToken();
-    const expiresAtMs = body.nowMs + CONNECTION_TICKET_TTL_MS;
-    this.roomAuth.connectionTickets[ticket] = {
-      participantId: body.participantId,
-      displayName: participant.displayName,
-      expiresAtMs,
-    };
-    this.removeExpiredTickets(body.nowMs);
+    const response = issueConnectionTicket(
+      this.roomAuth,
+      participant,
+      body.nowMs,
+      CONNECTION_TICKET_TTL_MS,
+    );
     await this.persist();
 
-    const response: ConnectionTicketResponse = { ticket, expiresAtMs };
     return jsonResponse(response, { status: 201 });
   }
 
@@ -269,11 +257,14 @@ export class PartyRoom {
 
     const url = new URL(request.url);
     const ticket = url.searchParams.get("ticket") ?? "";
-    const ticketDetails = this.roomAuth.connectionTickets[ticket];
-    if (!ticketDetails || ticketDetails.expiresAtMs < Date.now()) {
+    const ticketDetails = consumeConnectionTicket(
+      this.roomAuth,
+      ticket,
+      Date.now(),
+    );
+    if (!ticketDetails) {
       return jsonResponse({ error: "Invalid or expired connection ticket" }, { status: 401 });
     }
-    delete this.roomAuth.connectionTickets[ticket];
     await this.persist();
 
     const { participantId, displayName } = ticketDetails;
@@ -283,7 +274,7 @@ export class PartyRoom {
     const server = pair[1];
     server.accept();
 
-    this.sessions.set(server, {
+    this.connections.register(server, {
       participantId,
       displayName,
       messageWindowStartedAtMs: Date.now(),
@@ -293,7 +284,10 @@ export class PartyRoom {
     upsertConnectedParticipant(this.roomState, participantId, displayName, Date.now());
     await this.persist();
     await this.scheduleNextPresenceAlarm();
-    this.send(server, { type: "room.snapshot", state: this.roomState });
+    this.connections.send(server, {
+      type: "room.snapshot",
+      state: this.roomState,
+    });
     this.broadcastSnapshot();
 
     server.addEventListener("message", (event) => {
@@ -313,137 +307,36 @@ export class PartyRoom {
   }
 
   private async handleMessage(socket: WebSocket, raw: unknown): Promise<void> {
-    const session = this.sessions.get(socket);
-    if (!session || !this.roomState) return;
-    const limits = readRoomLimits(this.env);
-    if (messageSizeBytes(raw) > limits.maxMessageBytes) {
-      this.sendError(socket, "message_too_large", "Party message is too large.");
-      socket.close(1009, "Message too large");
-      return;
-    }
-    if (
-      !consumeMessageAllowance(
-        session,
-        Date.now(),
-        limits.maxMessagesPerWindow,
-        limits.messageWindowMs,
-      )
-    ) {
-      this.sendError(socket, "rate_limited", "Too many party messages.");
-      socket.close(1008, "Message rate exceeded");
-      return;
-    }
-
-    const message = this.parseClientMessage(raw);
-    if (!message) {
-      this.sendError(socket, "invalid_message", "Message must be valid JSON with a known shape.");
-      return;
-    }
-
-    if (message.type === "clock.ping") {
-      this.send(socket, {
-        type: "clock.pong",
-        clientSentAtMs: message.clientSentAtMs,
-        serverSentAtMs: Date.now(),
-      });
-      return;
-    }
-    if (message.type === "room.snapshot.request") {
-      this.send(socket, { type: "room.snapshot", state: this.roomState });
-      return;
-    }
-    if (message.type === "participant.status") {
-      const result = applyRoomMutation(
-        this.roomState,
-        message,
-        session.participantId,
-        Date.now(),
-        () => generateId("queue"),
-        limits,
-      );
-      if (result.changed) {
-        this.roomState.lastActivityAtMs = Date.now();
-        await this.commitAndBroadcast();
-      }
-      return;
-    }
-
-    const cachedResult = this.roomAuth?.operationResults[message.operationId];
-    if (cachedResult) {
-      this.send(socket, cachedResult);
-      return;
-    }
-
-    const result = applyRoomMutation(
-      this.roomState,
-      message,
-      session.participantId,
-      Date.now(),
-      () => generateId("queue"),
-      limits,
-    );
-    if (result.error) {
-      const operationResult: Extract<ServerMessage, { type: "operation.result" }> = {
-        type: "operation.result",
-        operationId: message.operationId,
-        accepted: false,
-        revision: this.roomState.revision,
-        error: {
-          code: result.error.code,
-          message: result.error.message,
-        },
-      };
-      this.rememberOperationResult(operationResult);
-      await this.persist();
-      this.send(socket, operationResult);
-      if (result.error.includeSnapshot) {
-        this.send(socket, { type: "room.snapshot", state: this.roomState });
-      }
-      return;
-    }
-    if (result.changed) {
-      this.roomState.lastActivityAtMs = Date.now();
-      this.roomState.revision += 1;
-      const operationResult: Extract<ServerMessage, { type: "operation.result" }> = {
-        type: "operation.result",
-        operationId: message.operationId,
-        accepted: true,
-        revision: this.roomState.revision,
-      };
-      this.rememberOperationResult(operationResult);
-      await this.persist();
-      this.broadcastSnapshot();
-      this.send(socket, operationResult);
-    }
-  }
-
-  private parseClientMessage(raw: unknown): ClientMessage | null {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(String(raw));
-    } catch {
-      return null;
-    }
-    if (!isClientMessage(parsed)) return null;
-    return parsed;
+    const session = this.connections.get(socket);
+    const room = this.roomState;
+    const auth = this.roomAuth;
+    if (!session || !room || !auth) return;
+    await processRoomMessage({
+      socket,
+      raw,
+      session,
+      room,
+      auth,
+      limits: readRoomLimits(this.env),
+      send: (message) => this.send(socket, message),
+      persist: () => this.persist(),
+      broadcast: () => this.broadcastSnapshot(),
+      now: Date.now,
+    });
   }
 
   private async disconnect(socket: WebSocket): Promise<void> {
-    const session = this.sessions.get(socket);
-    this.sessions.delete(socket);
+    const session = this.connections.remove(socket);
     if (!session || !this.roomState) return;
 
-    const stillConnected = Array.from(this.sessions.values()).some(
-      (candidate) => candidate.participantId === session.participantId,
-    );
-    if (stillConnected) return;
+    if (this.connections.hasParticipant(session.participantId)) return;
 
     const hostDisconnected = markParticipantDisconnected(
       this.roomState,
       session.participantId,
       Date.now(),
     );
-    if (this.sessions.size === 0) this.roomState.lastActivityAtMs = Date.now();
+    if (this.connections.size === 0) this.roomState.lastActivityAtMs = Date.now();
     await this.commitAndBroadcast();
     await this.scheduleNextPresenceAlarm(
       hostDisconnected
@@ -470,59 +363,25 @@ export class PartyRoom {
     await this.state.storage.put(entries);
   }
 
-  private rememberOperationResult(
-    result: Extract<ServerMessage, { type: "operation.result" }>,
-  ): void {
-    if (!this.roomAuth) return;
-    this.roomAuth.operationResults[result.operationId] = result;
-    const operationIds = Object.keys(this.roomAuth.operationResults);
-    if (operationIds.length <= 256) return;
-
-    for (const operationId of operationIds.slice(0, operationIds.length - 256)) {
-      delete this.roomAuth.operationResults[operationId];
-    }
-  }
-
-  private removeExpiredTickets(nowMs: number): void {
-    if (!this.roomAuth) return;
-    for (const [ticket, details] of Object.entries(this.roomAuth.connectionTickets)) {
-      if (details.expiresAtMs < nowMs) {
-        delete this.roomAuth.connectionTickets[ticket];
-      }
-    }
-  }
-
   private removeOrphanedParticipantTokens(): void {
     if (!this.roomState || !this.roomAuth) return;
     const activeParticipantIds = new Set(
       this.roomState.participants.map((participant) => participant.participantId),
     );
-    for (const participantId of Object.keys(this.roomAuth.participantTokens)) {
-      if (!activeParticipantIds.has(participantId)) {
-        delete this.roomAuth.participantTokens[participantId];
-      }
-    }
+    removeOrphanedParticipantTokens(this.roomAuth, activeParticipantIds);
   }
 
   private async scheduleNextPresenceAlarm(preferredTime?: number): Promise<void> {
     if (!this.roomState) return;
-    const connectedIds = new Set(
-      Array.from(this.sessions.values(), (session) => session.participantId),
-    );
-    const cleanupTimes = this.roomState.participants
-      .filter((participant) => participant.participantId !== this.roomState?.hostParticipantId)
-      .filter((participant) => !connectedIds.has(participant.participantId))
-      .map((participant) => participant.lastSeenAtMs + PARTICIPANT_RETENTION_MS);
-    const lifecycleExpiration = nextRoomExpirationAtMs(
+    const alarmAtMs = nextPresenceAlarmAtMs(
       this.roomState,
-      this.sessions.size > 0,
+      this.connections.participantIds(),
+      this.connections.size,
+      PARTICIPANT_RETENTION_MS,
       this.getLifecycle(),
+      preferredTime,
     );
-    const candidates = preferredTime
-      ? [preferredTime, lifecycleExpiration, ...cleanupTimes]
-      : [lifecycleExpiration, ...cleanupTimes];
-    if (candidates.length === 0) return;
-    await this.state.storage.setAlarm(Math.min(...candidates));
+    await this.state.storage.setAlarm(alarmAtMs);
   }
 
   private getLifecycle(): RoomLifecycle {
@@ -540,10 +399,7 @@ export class PartyRoom {
 
   private async expireRoom(): Promise<void> {
     const inviteCode = this.roomState?.inviteCode;
-    for (const socket of this.sessions.keys()) {
-      socket.close(1001, "Party expired");
-    }
-    this.sessions.clear();
+    this.connections.closeAll(1001, "Party expired");
     const cleanupTasks: Promise<unknown>[] = [this.state.storage.deleteAll()];
     if (inviteCode) cleanupTasks.push(this.env.INVITES.delete(inviteCode));
     await Promise.all(cleanupTasks);
@@ -554,16 +410,11 @@ export class PartyRoom {
   private broadcastSnapshot(): void {
     if (!this.roomState) return;
     const message: ServerMessage = { type: "room.snapshot", state: this.roomState };
-    for (const socket of this.sessions.keys()) {
-      this.send(socket, message);
-    }
+    this.connections.broadcast(message);
   }
 
   private send(socket: WebSocket, message: ServerMessage): void {
-    socket.send(JSON.stringify(message));
+    this.connections.send(socket, message);
   }
 
-  private sendError(socket: WebSocket, code: string, message: string): void {
-    this.send(socket, { type: "room.error", code, message });
-  }
 }

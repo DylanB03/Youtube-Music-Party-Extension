@@ -5,7 +5,18 @@ import { normalizeInviteCode } from "./invite-code";
 const STORAGE_KEY = "pendingPartyInvite";
 const INVITE_TTL_MS = 30 * 60_000;
 
+type PendingInviteStoragePort = {
+  get(key: string): Promise<Record<string, unknown>>;
+  set(values: Record<string, unknown>): Promise<void>;
+  remove(key: string): Promise<void>;
+};
+
 export class PendingInviteStorage {
+  constructor(
+    private readonly storage: PendingInviteStoragePort = browser.storage.local,
+    private readonly now: () => number = Date.now,
+  ) {}
+
   async save(inviteCode: string): Promise<PendingInvite> {
     const normalizedCode = normalizeInviteCode(inviteCode);
     if (!normalizedCode) {
@@ -13,23 +24,38 @@ export class PendingInviteStorage {
     }
     const invite: PendingInvite = {
       inviteCode: normalizedCode,
-      receivedAtMs: Date.now(),
+      receivedAtMs: this.now(),
     };
-    await browser.storage.local.set({ [STORAGE_KEY]: invite });
+    await this.storage.set({ [STORAGE_KEY]: invite });
     return invite;
   }
 
   async load(): Promise<PendingInvite | null> {
-    const values = await browser.storage.local.get(STORAGE_KEY);
-    const invite = values[STORAGE_KEY] as PendingInvite | undefined;
-    if (!invite || Date.now() - invite.receivedAtMs > INVITE_TTL_MS) {
-      if (invite) await this.clear();
+    const values = await this.storage.get(STORAGE_KEY);
+    const storedInvite = values[STORAGE_KEY];
+    if (!isPendingInvite(storedInvite)) {
+      if (storedInvite !== undefined) await this.clear();
       return null;
     }
-    return invite;
+    if (this.now() - storedInvite.receivedAtMs > INVITE_TTL_MS) {
+      await this.clear();
+      return null;
+    }
+    return storedInvite;
   }
 
   async clear(): Promise<void> {
-    await browser.storage.local.remove(STORAGE_KEY);
+    await this.storage.remove(STORAGE_KEY);
   }
+}
+
+function isPendingInvite(value: unknown): value is PendingInvite {
+  if (!value || typeof value !== "object") return false;
+  const invite = value as PendingInvite;
+  return (
+    typeof invite.inviteCode === "string" &&
+    normalizeInviteCode(invite.inviteCode) === invite.inviteCode &&
+    invite.inviteCode.length > 0 &&
+    Number.isFinite(invite.receivedAtMs)
+  );
 }

@@ -36,6 +36,9 @@ npm run check
 npm test
 ```
 
+Pull requests and pushes to `main` run the same checks, production builds, and
+Playwright browser suite through `.github/workflows/ci.yml`.
+
 Run the live Chrome extension smoke test:
 
 ```sh

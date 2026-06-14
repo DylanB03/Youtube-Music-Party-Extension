@@ -9,15 +9,17 @@ import {
   type RoomPermissions,
   type SyncStatus,
   type Track,
-  currentPlaybackPositionSeconds,
 } from "@ytm-party/shared";
 import {
-  canonicalPlaybackNeedsApplication,
-  decideGuestPlaybackAction,
   localToPartyPlayback,
   playbackKey,
 } from "./playback-policy";
 import type { PlaybackApplicationResult } from "./playback-application";
+import { PartyMutationCoordinator } from "./party-mutation-coordinator";
+import {
+  PlaybackSynchronizer,
+  type PlaybackSyncResult,
+} from "./playback-synchronizer";
 import type {
   ActiveSession,
   MutationMessage,
@@ -49,8 +51,8 @@ type ConnectionFactory = (credentials: StoredSession) => PartyConnection;
 export class PartyController {
   private session: ActiveSession | null = null;
   private terminalError: string | undefined;
-  private mutationRevision = 0;
-  private mutationChain: Promise<void> = Promise.resolve();
+  private readonly mutations = new PartyMutationCoordinator();
+  private readonly playback: PlaybackSynchronizer;
 
   constructor(
     private readonly api: PartyApiPort,
@@ -58,7 +60,9 @@ export class PartyController {
     private readonly tabs: TabGatewayPort,
     private readonly createConnection: ConnectionFactory,
     private readonly onStateChanged: StateListener,
-  ) {}
+  ) {
+    this.playback = new PlaybackSynchronizer(tabs);
+  }
 
   async initialize(): Promise<void> {
     const saved = await this.storage.load();
@@ -103,16 +107,16 @@ export class PartyController {
     this.session?.client.disconnect();
     this.session = null;
     this.terminalError = undefined;
-    this.mutationRevision = 0;
-    this.mutationChain = Promise.resolve();
+    this.mutations.reset();
     await this.storage.clear();
     this.publishState();
     return this.getView();
   }
 
   async joinPlayback(): Promise<SessionView> {
-    const applied = await this.applyCanonicalPlayback();
-    if (applied) await this.setLocalSyncStatus("in_sync");
+    const result = await this.playback.apply(this.requireSession());
+    if (result === "applied") await this.setLocalSyncStatus("in_sync");
+    else await this.handlePlaybackResult(result);
     return this.getView();
   }
 
@@ -176,9 +180,11 @@ export class PartyController {
   async handleContentReady(): Promise<void> {
     const status = this.session?.localSyncStatus;
     if (status !== "navigating" && status !== "in_sync") return;
-    const applied = await this.applyCanonicalPlayback();
-    if (status === "navigating" && applied) {
+    const result = await this.playback.apply(this.requireSession());
+    if (status === "navigating" && result === "applied") {
       await this.setLocalSyncStatus("in_sync");
+    } else {
+      await this.handlePlaybackResult(result);
     }
   }
 
@@ -214,31 +220,24 @@ export class PartyController {
   private async enqueueMutation(
     buildMessage: (operationId: string, expectedRevision: number) => MutationMessage,
   ): Promise<SessionView> {
-    const execution = this.mutationChain.then(async () => {
-      const session = this.requireSession();
-      const operationId = crypto.randomUUID();
-      const expectedRevision = this.mutationRevision || this.requireRevision();
-      const result = await session.client.sendOperation(
-        buildMessage(operationId, expectedRevision),
-      );
-      this.mutationRevision = result.revision;
-
-      if (!result.accepted) {
-        const message = result.error?.message ?? "The room rejected the action.";
-        session.lastError = message;
-        this.publishState();
-        throw new Error(message);
-      }
-    });
-    this.mutationChain = execution.catch(() => undefined);
-    await execution;
+    const session = this.requireSession();
+    const result = await this.mutations.execute(
+      session.client,
+      this.requireRevision(),
+      buildMessage,
+    );
+    if (!result.accepted) {
+      const message = result.error?.message ?? "The room rejected the action.";
+      session.lastError = message;
+      this.publishState();
+      throw new Error(message);
+    }
     return this.getView();
   }
 
   private async connect(credentials: StoredSession): Promise<void> {
     this.session?.client.disconnect();
-    this.mutationRevision = 0;
-    this.mutationChain = Promise.resolve();
+    this.mutations.reset();
     const client = this.createConnection(credentials);
     this.session = {
       ...credentials,
@@ -275,12 +274,13 @@ export class PartyController {
       ? playbackKey(this.session.state.playback)
       : null;
     this.session.state = state;
-    this.mutationRevision = Math.max(this.mutationRevision, state.revision);
+    this.mutations.observeRevision(state.revision);
     this.session.lastError = undefined;
 
     const playbackChanged = previousPlaybackKey !== playbackKey(state.playback);
     if (playbackChanged && this.session.localSyncStatus === "in_sync") {
-      await this.reconcileCanonicalPlayback();
+      const result = await this.playback.reconcile(this.session);
+      await this.handlePlaybackResult(result);
     }
     this.publishState();
   }
@@ -294,8 +294,7 @@ export class PartyController {
     if (state === "expired") {
       session.client.disconnect();
       this.session = null;
-      this.mutationRevision = 0;
-      this.mutationChain = Promise.resolve();
+      this.mutations.reset();
       this.terminalError = "This party has expired. Create or join another party.";
       await this.storage.clear();
       this.publishState();
@@ -349,11 +348,7 @@ export class PartyController {
   private async handleGuestPlaybackEvent(event: LocalPlaybackEvent): Promise<void> {
     if (this.session?.localSyncStatus !== "in_sync") return;
 
-    const playback = this.session.state?.playback;
-    if (!playback) return;
-
-    const nowMs = Date.now() + this.session.client.clockOffsetMs;
-    const decision = decideGuestPlaybackAction(event, playback, nowMs);
+    const decision = this.playback.decideGuestAction(event, this.session);
     switch (decision) {
       case "out_of_sync":
         await this.setLocalSyncStatus("out_of_sync");
@@ -364,7 +359,7 @@ export class PartyController {
         return;
 
       case "correct_drift":
-        await this.applyCanonicalPlayback();
+        await this.handlePlaybackResult(await this.playback.apply(this.session));
         return;
 
       case "ignore":
@@ -372,40 +367,11 @@ export class PartyController {
     }
   }
 
-  private async reconcileCanonicalPlayback(): Promise<void> {
-    const session = this.requireSession();
-    const canonical = session.state?.playback;
-    if (!canonical?.track) return;
-
-    const local = await this.tabs.getPlayback();
-    const nowMs = Date.now() + session.client.clockOffsetMs;
-    if (!canonicalPlaybackNeedsApplication(local, canonical, nowMs)) return;
-
-    await this.applyCanonicalPlayback();
-  }
-
-  private async applyCanonicalPlayback(): Promise<boolean> {
-    const session = this.requireSession();
-    const canonical = session.state?.playback;
-    if (!canonical?.track) return true;
-
-    const nowMs = Date.now() + session.client.clockOffsetMs;
-    const playback: PartyPlaybackState = {
-      ...canonical,
-      positionSeconds: currentPlaybackPositionSeconds(canonical, nowMs),
-      effectiveAtMs: Date.now(),
-    };
-
-    try {
-      const result = await this.tabs.applyPlayback(playback);
-      if (result === "navigating") {
-        await this.setLocalSyncStatus("navigating");
-        return false;
-      }
-      return true;
-    } catch {
+  private async handlePlaybackResult(result: PlaybackSyncResult): Promise<void> {
+    if (result === "navigating") {
+      await this.setLocalSyncStatus("navigating");
+    } else if (result === "track_unavailable") {
       await this.setLocalSyncStatus("track_unavailable");
-      return false;
     }
   }
 

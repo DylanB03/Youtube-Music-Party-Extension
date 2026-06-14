@@ -38,6 +38,8 @@ This document describes the current feature set, user and system workflows, diff
 - Removal of inactive non-host participants and their stored credentials.
 - Extension session recovery after a Manifest V3 service worker restart.
 - Runtime backend message validation and request rate limits.
+- Runtime client validation for inbound WebSocket messages with protocol-error recovery.
+- Bounded operation waits that request a fresh room snapshot after timeout.
 - Configurable participant, queue, WebSocket message-size, message-rate, display-name, and track-metadata limits.
 - Absolute room expiration and abandoned-room idle expiration with invite and Durable Object cleanup.
 - Terminal expired-room handling that clears saved extension credentials instead of reconnecting forever.
@@ -47,8 +49,10 @@ This document describes the current feature set, user and system workflows, diff
 - Adapter diagnostics through `window.__ytmPartyDiagnostics()`.
 - Unit and orchestration tests for permissions, queue behavior, revisions, presence, host transfer, synchronization, and controller behavior.
 - Playwright smoke test that launches the production extension on the live YouTube Music origin and verifies content-script diagnostics.
+- Continuous integration for type checks, unit tests, production builds, and browser regressions.
 - Two-client local Durable Object tests for queueing, permissions, playback, stale revisions, reconnect recovery, host transfer, participant limits, and lifecycle expiry.
 - Recorded selector fixtures for search, album, playlist, queue, and recommendation surfaces.
+- A dated live-origin compatibility report separating automated evidence from authenticated manual checks.
 - Side-panel loading states, actionable errors, success notices, host-disconnected notice, clipboard feedback, and leave-party control.
 
 ### Partially Implemented
@@ -170,7 +174,9 @@ The content script owns YouTube Music DOM and media interaction. The background 
 - `package.json`: Defines workspaces and root development, verification, and build commands.
 - `package-lock.json`: Locks dependency versions.
 - `playwright.config.ts`: Configures browser smoke tests and failure traces.
+- `.github/workflows/ci.yml`: Runs type, unit, build, and browser verification for pull requests and `main`.
 - `docs/youtube-music-selector-validation.md`: Provides the signed-in selector and interruption validation checklist.
+- `docs/youtube-music-compatibility-report.md`: Records automated live-origin results and remaining authenticated checks.
 - `tsconfig.base.json`: Supplies shared strict TypeScript settings.
 - `.gitignore`: Excludes dependencies, generated output, Wrangler state, and local configuration.
 
@@ -185,7 +191,7 @@ The content script owns YouTube Music DOM and media interaction. The background 
 
 - `apps/backend/src/index.ts`: Exposes Worker and Durable Object entrypoints.
 - `apps/backend/src/api-worker.ts`: Routes health, invite, room, join, ticket, and WebSocket requests and applies rate limits.
-- `apps/backend/src/party-room.ts`: Persists rooms, authenticates tickets, manages sockets and presence, dispatches mutations, and stores operation results.
+- `apps/backend/src/party-room.ts`: Coordinates Durable Object HTTP routes, room persistence, lifecycle alarms, sockets, and extracted domain services.
 - `apps/backend/src/domain/room-state.ts`: Contains pure permission, playback, queue, revision, presence, cleanup, and host-transfer rules.
 - `apps/backend/src/domain/room-state.test.ts`: Verifies backend domain behavior.
 - `apps/backend/src/domain/connection-guard.ts`: Measures message bytes and enforces per-socket burst limits.
@@ -193,6 +199,10 @@ The content script owns YouTube Music DOM and media interaction. The background 
 - `apps/backend/src/domain/room-lifecycle.ts`: Calculates absolute and abandoned-idle room expiration.
 - `apps/backend/src/domain/room-lifecycle.test.ts`: Verifies lifecycle deadlines.
 - `apps/backend/src/domain/room-limits.ts`: Reads configurable room limits and validates display names.
+- `apps/backend/src/domain/room-auth.ts`: Owns participant tokens, connection tickets, and retained operation acknowledgements.
+- `apps/backend/src/domain/room-connections.ts`: Tracks active sockets, connected participants, broadcasts, and room-wide closure.
+- `apps/backend/src/domain/room-message-processor.ts`: Validates socket traffic and applies limits, mutations, acknowledgements, and snapshots.
+- `apps/backend/src/domain/room-presence.ts`: Calculates participant-cleanup and room-lifecycle alarm deadlines.
 - `apps/backend/src/lib/http.ts`: Builds JSON responses and parses request bodies.
 - `apps/backend/src/lib/invite-page.ts`: Renders valid and expired invite landing pages with the YouTube Music deep link.
 - `apps/backend/src/lib/invite-page.test.ts`: Verifies invite deep links and expired-link responses.
@@ -219,8 +229,16 @@ The content script owns YouTube Music DOM and media interaction. The background 
 - `apps/extension/src/invite-code.ts`: Normalizes invite codes independently of browser storage.
 - `apps/extension/src/pending-invite-storage.ts`: Stores prepared invite codes locally with a 30-minute lifetime.
 - `apps/extension/src/pending-invite-storage.test.ts`: Verifies invite-code normalization.
+- `apps/extension/src/invite-coordinator.ts`: Preserves prepared invites even when Chrome cannot open the side panel.
+- `apps/extension/src/invite-coordinator.test.ts`: Verifies side-panel failure does not discard an invite.
 - `apps/extension/src/party-client.ts`: Manages ticket-authenticated sockets, reconnects, pending operations, snapshots, and clock pings.
-- `apps/extension/src/party-controller.ts`: Orchestrates sessions, serialized mutations, synchronization, navigation, and user actions.
+- `apps/extension/src/server-message.ts`: Parses and validates backend frames before the realtime client consumes them.
+- `apps/extension/src/server-message.test.ts`: Verifies malformed and valid backend frame handling.
+- `apps/extension/src/pending-operations.ts`: Owns acknowledgement waits, timeout recovery, reconnect resends, and rejection.
+- `apps/extension/src/pending-operations.test.ts`: Verifies acknowledgement, timeout, and resend behavior.
+- `apps/extension/src/party-controller.ts`: Coordinates sessions and user actions through extracted mutation and playback services.
+- `apps/extension/src/party-mutation-coordinator.ts`: Serializes mutations against acknowledged room revisions.
+- `apps/extension/src/playback-synchronizer.ts`: Owns canonical playback calculation, reconciliation, and guest drift decisions.
 - `apps/extension/src/party-controller.test.ts`: Verifies controller permissions, serialization, and playback reconciliation.
 - `apps/extension/src/playback-policy.ts`: Contains pure guest drift and reconciliation decisions.
 - `apps/extension/src/playback-policy.test.ts`: Verifies drift and interruption decisions.
@@ -267,6 +285,6 @@ env XDG_CONFIG_HOME=/tmp npm run build:backend
 env PLAYWRIGHT_BROWSERS_PATH=/tmp/playwright-browsers npm run test:browser
 ```
 
-The suite contains 41 unit and orchestration tests plus five browser/integration scenarios. Browser coverage proves production extension loading, invite preparation without automatic joining, representative menu injection, five signed-in surface fixtures, ad and unavailable selectors, two-client realtime room behavior, reconnect recovery, host transfer, and abandoned-room expiry. The signed-in checklist remains necessary because YouTube Music can change private DOM variants independently of this project.
+The suite contains 52 unit and orchestration tests plus six browser/integration scenarios. Browser coverage proves production extension loading, invite preparation and dismissal without automatic joining, representative menu injection, five signed-in surface fixtures, ad and unavailable selectors, two-client realtime room behavior, reconnect recovery, host transfer, and abandoned-room expiry. The authenticated checklist remains necessary because YouTube Music can change private DOM variants independently of this project.
 
 `npm audit` reports six advisories in WXT's local `web-ext-run` development chain, for which npm currently offers no patched WXT path. The critical Vitest advisory was removed by upgrading to Vitest 4.1.8. The remaining affected tools are used during local extension development and are not included in the built extension or Worker bundle.

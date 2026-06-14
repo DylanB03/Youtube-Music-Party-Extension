@@ -409,6 +409,39 @@ export function isClientMessage(value: unknown): value is ClientMessage {
   }
 }
 
+export function isServerMessage(value: unknown): value is ServerMessage {
+  if (!value || typeof value !== "object") return false;
+  const message = value as Partial<ServerMessage> & Record<string, unknown>;
+
+  switch (message.type) {
+    case "clock.pong":
+      return (
+        isFiniteNumber(message.clientSentAtMs) &&
+        isFiniteNumber(message.serverSentAtMs)
+      );
+
+    case "room.snapshot":
+      return isPartyRoomState(message.state);
+
+    case "room.error":
+      return (
+        isBoundedString(message.code, 128, true) &&
+        isBoundedString(message.message, 1_000, true)
+      );
+
+    case "operation.result":
+      return (
+        isOperationId(message.operationId) &&
+        typeof message.accepted === "boolean" &&
+        isRevision(message.revision) &&
+        (message.error === undefined || isOperationError(message.error))
+      );
+
+    default:
+      return false;
+  }
+}
+
 export function defaultPermissions(): RoomPermissions {
   return {
     guestsCanSkip: false,
@@ -435,6 +468,64 @@ function isRevision(value: unknown): value is number {
 
 function isOperationId(value: unknown): value is string {
   return typeof value === "string" && value.length > 0 && value.length <= 128;
+}
+
+function isPartyRoomState(value: unknown): value is PartyRoomState {
+  if (!value || typeof value !== "object") return false;
+  const room = value as PartyRoomState;
+  return (
+    isBoundedString(room.roomId, 256, true) &&
+    isRevision(room.revision) &&
+    isBoundedString(room.hostParticipantId, 256, true) &&
+    isRoomPermissions(room.permissions) &&
+    isPartyPlaybackState(room.playback) &&
+    Array.isArray(room.queue) &&
+    room.queue.every(isQueueItem) &&
+    Array.isArray(room.participants) &&
+    room.participants.every(isParticipantState) &&
+    isBoundedOptionalString(room.inviteCode, 128) &&
+    isOptionalFiniteNumber(room.hostDisconnectedAtMs) &&
+    isOptionalFiniteNumber(room.createdAtMs) &&
+    isOptionalFiniteNumber(room.lastActivityAtMs) &&
+    isOptionalFiniteNumber(room.expiresAtMs)
+  );
+}
+
+function isQueueItem(value: unknown): value is QueueItem {
+  if (!value || typeof value !== "object") return false;
+  const item = value as QueueItem;
+  return (
+    isBoundedString(item.id, 256, true) &&
+    isTrack(item.track) &&
+    isBoundedString(item.addedByParticipantId, 256, true) &&
+    isFiniteNumber(item.addedAtMs)
+  );
+}
+
+function isParticipantState(value: unknown): value is ParticipantState {
+  if (!value || typeof value !== "object") return false;
+  const participant = value as ParticipantState;
+  return (
+    isBoundedString(participant.participantId, 256, true) &&
+    isBoundedString(participant.displayName, 200, true) &&
+    (participant.role === "host" || participant.role === "guest") &&
+    isSyncStatus(participant.syncStatus) &&
+    isFiniteNumber(participant.connectedAtMs) &&
+    isFiniteNumber(participant.lastSeenAtMs)
+  );
+}
+
+function isOperationError(value: unknown): boolean {
+  if (!value || typeof value !== "object") return false;
+  const operationError = value as { code?: unknown; message?: unknown };
+  return (
+    isBoundedString(operationError.code, 128, true) &&
+    isBoundedString(operationError.message, 1_000, true)
+  );
+}
+
+function isOptionalFiniteNumber(value: unknown): boolean {
+  return value === undefined || isFiniteNumber(value);
 }
 
 function isBoundedString(

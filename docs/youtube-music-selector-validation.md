@@ -2,6 +2,10 @@
 
 Use this checklist while signed into YouTube Music after selector or adapter changes.
 
+The latest automated live-origin run is recorded in
+`docs/youtube-music-compatibility-report.md`. Automated fixtures do not replace
+this authenticated release check.
+
 1. Open search results and use a song's three-dot menu.
 2. Open an album and use a song-row menu.
 3. Open a playlist and use a song-row menu.

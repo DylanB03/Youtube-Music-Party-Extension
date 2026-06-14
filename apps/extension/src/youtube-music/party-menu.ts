@@ -98,13 +98,18 @@ function ensurePartyAction(
   const button = document.createElement("button");
   button.type = "button";
   button.disabled = true;
-  button.innerHTML = `
-    <span class="icon" aria-hidden="true">+</span>
-    <span class="copy">
-      <strong>Add to party queue</strong>
-      <small>Checking party access...</small>
-    </span>
-  `;
+  const icon = document.createElement("span");
+  icon.className = "icon";
+  icon.setAttribute("aria-hidden", "true");
+  icon.textContent = "+";
+  const copy = document.createElement("span");
+  copy.className = "copy";
+  const title = document.createElement("strong");
+  title.textContent = "Add to party queue";
+  const detail = document.createElement("small");
+  detail.textContent = "Checking party access...";
+  copy.append(title, detail);
+  button.append(icon, copy);
   shadow.append(style, button);
   menu.append(host);
 
