@@ -7,7 +7,7 @@ import type {
   ServerMessage,
 } from "../../../packages/shared/src/index";
 
-const API_BASE_URL = "http://127.0.0.1:8787";
+export const API_BASE_URL = "http://127.0.0.1:8797";
 
 type ParticipantCredentials = {
   roomId: string;

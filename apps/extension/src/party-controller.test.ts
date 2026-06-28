@@ -90,6 +90,7 @@ class FakeStorage {
 
 class FakeTabs {
   applied: PartyPlaybackState[] = [];
+  failApply = false;
   playback: LocalPlaybackState = {
     track: { videoId: "old-track" },
     paused: true,
@@ -102,6 +103,7 @@ class FakeTabs {
   }
 
   async applyPlayback(playback: PartyPlaybackState): Promise<"applied"> {
+    if (this.failApply) throw new Error("Tab stalled");
     this.applied.push(playback);
     this.playback = {
       track: playback.track,
@@ -174,6 +176,49 @@ async function createGuestController(): Promise<{
   return { controller, connection, tabs, views };
 }
 
+async function createHostController(): Promise<{
+  controller: PartyController;
+  connection: FakeConnection;
+  tabs: FakeTabs;
+}> {
+  const credentials: StoredSession = {
+    roomId: "room",
+    participantId: "host",
+    participantToken: "token",
+    displayName: "Host",
+    localSyncStatus: "in_sync",
+  };
+  const connection = new FakeConnection();
+  const tabs = new FakeTabs();
+  const controller = new PartyController(
+    {
+      async createRoom() {
+        throw new Error("Not used");
+      },
+      async joinRoom() {
+        throw new Error("Not used");
+      },
+    },
+    new FakeStorage(credentials),
+    tabs,
+    () => connection,
+    () => undefined,
+  );
+  await controller.initialize();
+  connection.emitSnapshot(roomState());
+  await Promise.resolve();
+  return { controller, connection, tabs };
+}
+
+async function flushControllerWork(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
 describe("party controller orchestration", () => {
   it("does not let a guest track-ended event advance the shared queue", async () => {
     const { controller, connection } = await createGuestController();
@@ -205,6 +250,173 @@ describe("party controller orchestration", () => {
         expectedRevision: 2,
       },
     ]);
+  });
+
+  it("advances only once for duplicate host ended events", async () => {
+    const { controller, connection } = await createHostController();
+    connection.sent = [];
+    const endedEvent = {
+      type: "local.ended" as const,
+      playback: {
+        track: { videoId: "current-track" },
+        paused: true,
+        positionSeconds: 180,
+        durationSeconds: 180,
+        buffering: false,
+      },
+    };
+
+    await controller.handleLocalPlaybackEvent(endedEvent);
+    await controller.handleLocalPlaybackEvent(endedEvent);
+
+    expect(
+      connection.sent.filter((message) => message.type === "playback.skip"),
+    ).toHaveLength(1);
+  });
+
+  it("keeps the solo host in sync when YouTube Music stalls during canonical apply", async () => {
+    const { controller, connection, tabs } = await createHostController();
+    tabs.failApply = true;
+    connection.sent = [];
+    const nextState = roomState();
+    nextState.revision = 3;
+    nextState.playback = {
+      track: { videoId: "queued-track" },
+      paused: false,
+      positionSeconds: 0,
+      effectiveAtMs: Date.now(),
+    };
+
+    connection.emitSnapshot(nextState);
+    await flushControllerWork();
+
+    expect(controller.getView()).toMatchObject({
+      localSyncStatus: "in_sync",
+      lastError:
+        "YouTube Music has not loaded the party track yet. Keeping host playback active.",
+    });
+    expect(
+      connection.sent.filter(
+        (message) =>
+          message.type === "participant.status" &&
+          message.syncStatus === "track_unavailable",
+      ),
+    ).toEqual([]);
+  });
+
+  it("ignores YouTube Music auto-next host events while party auto-advance is pending", async () => {
+    const { controller, connection } = await createHostController();
+    connection.sent = [];
+
+    await controller.handleLocalPlaybackEvent({
+      type: "local.ended",
+      playback: {
+        track: { videoId: "current-track" },
+        paused: true,
+        positionSeconds: 180,
+        durationSeconds: 180,
+        buffering: false,
+      },
+    });
+    await controller.handleLocalPlaybackEvent({
+      type: "local.play",
+      playback: {
+        track: { videoId: "youtube-auto-next" },
+        paused: false,
+        positionSeconds: 0,
+        buffering: false,
+      },
+    });
+
+    expect(connection.sent).toEqual([
+      {
+        type: "playback.skip",
+        operationId: expect.any(String),
+        expectedRevision: 2,
+      },
+    ]);
+  });
+
+  it("accepts host controls again after the queued canonical track applies", async () => {
+    const { controller, connection, tabs } = await createHostController();
+    connection.sent = [];
+
+    await controller.handleLocalPlaybackEvent({
+      type: "local.ended",
+      playback: {
+        track: { videoId: "current-track" },
+        paused: true,
+        positionSeconds: 180,
+        durationSeconds: 180,
+        buffering: false,
+      },
+    });
+
+    const nextState = roomState();
+    nextState.revision = 3;
+    nextState.playback = {
+      track: { videoId: "party-queued-track" },
+      paused: false,
+      positionSeconds: 0,
+      effectiveAtMs: Date.now(),
+    };
+    connection.emitSnapshot(nextState);
+    await flushControllerWork();
+    expect(tabs.applied.at(-1)?.track?.videoId).toBe("party-queued-track");
+
+    await controller.handleLocalPlaybackEvent({
+      type: "local.pause",
+      playback: {
+        track: { videoId: "party-queued-track" },
+        paused: true,
+        positionSeconds: 8,
+        buffering: false,
+      },
+    });
+
+    expect(
+      connection.sent.filter((message) => message.type === "playback.host_state"),
+    ).toHaveLength(1);
+  });
+
+  it("applies empty canonical playback when the queue ends with no next track", async () => {
+    const { controller, connection, tabs } = await createHostController();
+    connection.sent = [];
+
+    await controller.handleLocalPlaybackEvent({
+      type: "local.ended",
+      playback: {
+        track: { videoId: "current-track" },
+        paused: true,
+        positionSeconds: 180,
+        durationSeconds: 180,
+        buffering: false,
+      },
+    });
+
+    tabs.playback = {
+      track: { videoId: "youtube-auto-next" },
+      paused: false,
+      positionSeconds: 1,
+      buffering: false,
+    };
+    const emptyState = roomState();
+    emptyState.revision = 3;
+    emptyState.playback = {
+      track: null,
+      paused: true,
+      positionSeconds: 0,
+      effectiveAtMs: Date.now(),
+    };
+
+    connection.emitSnapshot(emptyState);
+    await flushControllerWork();
+
+    expect(tabs.applied.at(-1)?.track).toBeNull();
+    expect(tabs.playback).toMatchObject({
+      track: null,
+      paused: true,
+    });
   });
 
   it("serializes mutations against acknowledged room revisions", async () => {

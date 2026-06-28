@@ -15,7 +15,9 @@ The production Manifest V3 extension was loaded in Chromium 148 on the live
 - Playlist-row song extraction.
 - Player-queue song extraction.
 - Recommendation-card song extraction.
+- Modern action-menu song extraction.
 - Shadow DOM party-menu insertion without `innerHTML`.
+- Anchored queue-action fallback when no recognized popup is available.
 - Disabled queue-action explanation outside a party.
 - Advertisement selector detection using a representative page state.
 - Unavailable-track selector detection using a representative error renderer.

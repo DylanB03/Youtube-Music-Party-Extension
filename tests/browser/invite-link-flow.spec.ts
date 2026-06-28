@@ -1,6 +1,9 @@
 import { chromium, expect, test } from "@playwright/test";
 import path from "node:path";
-import { createTestParty } from "./support/party-test-client";
+import {
+  API_BASE_URL,
+  createTestParty,
+} from "./support/party-test-client";
 
 test("an invite link prepares the side panel without joining automatically", async () => {
   const created = await createTestParty("Invite Host", {
@@ -10,7 +13,7 @@ test("an invite link prepares the side panel without joining automatically", asy
     effectiveAtMs: Date.now(),
   });
   const landingResponse = await fetch(
-    `http://127.0.0.1:8787/join/${created.inviteCode}`,
+    `${API_BASE_URL}/join/${created.inviteCode}`,
   );
   const landingPage = await landingResponse.text();
   expect(landingResponse.ok).toBe(true);

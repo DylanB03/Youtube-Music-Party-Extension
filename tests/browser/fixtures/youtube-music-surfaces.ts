@@ -75,4 +75,16 @@ export const youtubeMusicSurfaceFixtures: YouTubeMusicSurfaceFixture[] = [
     triggerTag: "yt-button-shape",
     triggerAttribute: { name: "aria-label", value: "More actions" },
   },
+  {
+    name: "action-menu row",
+    rowTag: "ytmusic-responsive-list-item-renderer",
+    videoId: "action-menu-track",
+    videoSource: "link",
+    title: "Action Menu Track",
+    titleTag: "a",
+    artist: "Action Menu Artist",
+    artistClass: "subtitle",
+    triggerTag: "yt-button-shape",
+    triggerAttribute: { name: "aria-label", value: "Action menu" },
+  },
 ];

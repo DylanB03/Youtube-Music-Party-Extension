@@ -6,6 +6,8 @@ import type {
 } from "@ytm-party/shared";
 import type { PlaybackApplicationResult } from "./playback-application";
 import { loadTrack, waitForMedia } from "./youtube-music/navigation";
+import { pausePagePlayer } from "./youtube-music/page-bridge";
+import { PlaybackTransitionDetector } from "./youtube-music/playback-transition";
 import {
   findMediaElement,
   inspectSelectorCoverage,
@@ -15,37 +17,46 @@ import {
 
 type Listener = (event: LocalPlaybackEvent) => void;
 
-let lastVideoId: string | null = null;
 let lastInterruption: LocalPlaybackState["interruption"];
 let suppressLocalEventsUntilMs = 0;
+let activePlaybackApplications = 0;
 
 export async function applyPlayback(
   playback: PartyPlaybackState,
 ): Promise<PlaybackApplicationResult> {
-  if (!playback.track) return "applied";
+  activePlaybackApplications += 1;
   suppressLocalEventsUntilMs = Date.now() + 2500;
 
-  const trackLoaded = await loadTrack(playback.track.videoId);
-  if (!trackLoaded) return "navigating";
+  try {
+    if (!playback.track) {
+      await pauseLocalPlayback();
+      return "applied";
+    }
 
-  const media = await waitForMedia();
-  media.currentTime = Math.max(0, playback.positionSeconds);
-  if (playback.paused) {
-    media.pause();
-  } else {
-    await media.play();
+    await loadTrack(playback.track.videoId);
+
+    const media = await waitForMedia();
+    media.currentTime = Math.max(0, playback.positionSeconds);
+    if (playback.paused) {
+      media.pause();
+    } else {
+      await media.play();
+    }
+    return "applied";
+  } finally {
+    activePlaybackApplications = Math.max(0, activePlaybackApplications - 1);
+    suppressLocalEventsUntilMs = Date.now() + 750;
   }
-  suppressLocalEventsUntilMs = Date.now() + 750;
-  return "applied";
 }
 
 export function observePlayback(listener: Listener): () => void {
   let observedMedia: HTMLMediaElement | null = null;
   let removeMediaListeners: (() => void) | null = null;
   let lastProgressAtMs = 0;
+  const transitions = new PlaybackTransitionDetector();
 
   const emit = (type: LocalPlaybackEvent["type"]) => {
-    if (Date.now() < suppressLocalEventsUntilMs) return;
+    if (shouldSuppressLocalEvents()) return;
     listener({ type, playback: readPlaybackState() } as LocalPlaybackEvent);
   };
 
@@ -53,7 +64,13 @@ export function observePlayback(listener: Listener): () => void {
     const onPlay = () => emit("local.play");
     const onPause = () => emit("local.pause");
     const onSeek = () => emit("local.seek");
-    const onEnded = () => emit("local.ended");
+    const onEnded = () => {
+      const playback = readPlaybackState();
+      transitions.recordEnded(playback);
+      if (!shouldSuppressLocalEvents()) {
+        listener({ type: "local.ended", playback });
+      }
+    };
     const onWaiting = () => emit("local.buffering");
     const onError = () => emit("local.interruption");
     const onTimeUpdate = () => {
@@ -90,9 +107,10 @@ export function observePlayback(listener: Listener): () => void {
     }
 
     const playback = readPlaybackState();
-    const videoId = playback.track?.videoId;
-    if (videoId && videoId !== lastVideoId) {
-      lastVideoId = videoId;
+    const transition = transitions.observe(playback);
+    if (transition === "ended") {
+      emit("local.ended");
+    } else if (transition === "track_changed") {
       emit("local.track_changed");
     }
     if (playback.interruption && playback.interruption !== lastInterruption) {
@@ -118,8 +136,8 @@ export function getAdapterDiagnostics(
     playback: readPlaybackState(),
     mediaReadyState: media?.readyState ?? null,
     mediaNetworkState: media?.networkState ?? null,
-    suppressingLocalEvents: Date.now() < suppressLocalEventsUntilMs,
-    lastVideoId,
+    suppressingLocalEvents: shouldSuppressLocalEvents(),
+    activePlaybackApplications,
     lastInterruption,
     selectorCoverage: inspectSelectorCoverage(),
   };
@@ -127,4 +145,16 @@ export function getAdapterDiagnostics(
 
 export function getPlaybackState(): LocalPlaybackState {
   return readPlaybackState();
+}
+
+function shouldSuppressLocalEvents(): boolean {
+  return activePlaybackApplications > 0 || Date.now() < suppressLocalEventsUntilMs;
+}
+
+async function pauseLocalPlayback(): Promise<void> {
+  try {
+    await pausePagePlayer();
+  } catch {
+    findMediaElement()?.pause();
+  }
 }

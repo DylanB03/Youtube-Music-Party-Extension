@@ -10,9 +10,12 @@ const SONG_ROW_SELECTOR = [
 const MENU_TRIGGER_SELECTOR = [
   'button[aria-haspopup="true"]',
   'button[aria-label*="More"]',
+  'button[aria-label*="Action menu"]',
   'button[title*="More"]',
   'tp-yt-paper-icon-button[aria-label*="More"]',
   'yt-button-shape[aria-label*="More"]',
+  'yt-button-shape[aria-label*="Action menu"]',
+  '[data-id="menu"]',
   ".dropdown-trigger",
 ].join(", ");
 
@@ -88,6 +91,14 @@ export function findTrackFromTarget(target: EventTarget | null): Track | null {
   return { videoId, title, artist };
 }
 
+export function findTrackFromEvent(event: Event): Track | null {
+  for (const target of event.composedPath()) {
+    const track = findTrackFromTarget(target);
+    if (track) return track;
+  }
+  return findTrackFromTarget(event.target);
+}
+
 export function isSongMenuTrigger(target: EventTarget | null): boolean {
   const element = target instanceof Element ? target : null;
   const trigger = element?.closest<HTMLElement>(MENU_TRIGGER_SELECTOR);
@@ -98,8 +109,18 @@ export function isSongMenuTrigger(target: EventTarget | null): boolean {
   }`.toLowerCase();
   return (
     label.includes("more") ||
-    trigger.matches('[aria-haspopup="true"], .dropdown-trigger')
+    label.includes("action menu") ||
+    trigger.matches(
+      '[aria-haspopup="true"], [data-id="menu"], .dropdown-trigger',
+    )
   );
+}
+
+export function isSongMenuEvent(event: Event): boolean {
+  for (const target of event.composedPath()) {
+    if (isSongMenuTrigger(target)) return true;
+  }
+  return isSongMenuTrigger(event.target);
 }
 
 export function findTrackLink(videoId: string): HTMLAnchorElement | null {

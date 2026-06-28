@@ -87,6 +87,15 @@ export function applyRoomMutation(
           },
         };
       }
+      if (!state.playback.track) {
+        state.playback = {
+          track: message.track,
+          paused: false,
+          positionSeconds: 0,
+          effectiveAtMs: nowMs,
+        };
+        return { changed: true };
+      }
       if (limits && state.queue.length >= limits.maxQueueItems) {
         return {
           changed: false,

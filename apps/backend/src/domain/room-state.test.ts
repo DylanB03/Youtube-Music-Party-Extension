@@ -66,6 +66,38 @@ describe("party room mutations", () => {
     expect(state.queue[0]?.track.videoId).toBe("queued");
   });
 
+  it("starts the first added track when the party has no active playback", () => {
+    const state = createRoomState();
+    state.playback = {
+      track: null,
+      paused: true,
+      positionSeconds: 0,
+      effectiveAtMs: 1_000,
+    };
+
+    const result = applyRoomMutation(
+      state,
+      {
+        type: "queue.add",
+        operationId: "queue-start",
+        track: { videoId: "first-track" },
+        expectedRevision: 4,
+      },
+      "host",
+      2_000,
+      () => "unused",
+    );
+
+    expect(result.error).toBeUndefined();
+    expect(state.queue).toEqual([]);
+    expect(state.playback).toEqual({
+      track: { videoId: "first-track" },
+      paused: false,
+      positionSeconds: 0,
+      effectiveAtMs: 2_000,
+    });
+  });
+
   it("rejects guest skipping unless the host enables it", () => {
     const state = createRoomState();
     const result = applyRoomMutation(

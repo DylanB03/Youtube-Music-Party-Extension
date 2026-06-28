@@ -54,6 +54,7 @@ export default defineContentScript({
     });
 
     browser.runtime.onMessage.addListener((message: ExtensionRequest, _sender, sendResponse) => {
+      if (!isContentCommand(message)) return false;
       void handleMessage(message)
         .then((data) => sendResponse({ ok: true, data }))
         .catch((error: Error) => sendResponse({ ok: false, error: error.message }));
@@ -66,7 +67,27 @@ export default defineContentScript({
   },
 });
 
-async function handleMessage(message: ExtensionRequest): Promise<unknown> {
+type ContentCommand = Extract<
+  ExtensionRequest,
+  {
+    type:
+      | "content.getPlayback"
+      | "content.applyPlayback"
+      | "content.getContextSong"
+      | "content.getDiagnostics";
+  }
+>;
+
+function isContentCommand(message: ExtensionRequest): message is ContentCommand {
+  return (
+    message.type === "content.getPlayback" ||
+    message.type === "content.applyPlayback" ||
+    message.type === "content.getContextSong" ||
+    message.type === "content.getDiagnostics"
+  );
+}
+
+async function handleMessage(message: ContentCommand): Promise<unknown> {
   switch (message.type) {
     case "content.getPlayback":
       return getPlaybackState();
@@ -79,8 +100,5 @@ async function handleMessage(message: ExtensionRequest): Promise<unknown> {
 
     case "content.getDiagnostics":
       return getAdapterDiagnostics(trackSelection.peek());
-
-    default:
-      return null;
   }
 }

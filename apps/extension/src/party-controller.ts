@@ -47,10 +47,19 @@ type TabGatewayPort = {
   getContextSong(tabId?: number): Promise<Track | null>;
 };
 type ConnectionFactory = (credentials: StoredSession) => PartyConnection;
+type PendingAutoAdvance = {
+  key: string;
+  revision: number;
+  startedAtMs: number;
+};
+
+const AUTO_ADVANCE_EVENT_SUPPRESSION_MS = 15_000;
 
 export class PartyController {
   private session: ActiveSession | null = null;
   private terminalError: string | undefined;
+  private lastAutoAdvanceKey: string | null = null;
+  private pendingAutoAdvance: PendingAutoAdvance | null = null;
   private readonly mutations = new PartyMutationCoordinator();
   private readonly playback: PlaybackSynchronizer;
 
@@ -114,9 +123,14 @@ export class PartyController {
   }
 
   async joinPlayback(): Promise<SessionView> {
-    const result = await this.playback.apply(this.requireSession());
+    const session = this.requireSession();
+    const result = await this.playback.apply(session);
     if (result === "applied") await this.setLocalSyncStatus("in_sync");
-    else await this.handlePlaybackResult(result);
+    else {
+      await this.handlePlaybackResult(result, {
+        keepHostInSync: session.state?.hostParticipantId === session.participantId,
+      });
+    }
     return this.getView();
   }
 
@@ -180,11 +194,14 @@ export class PartyController {
   async handleContentReady(): Promise<void> {
     const status = this.session?.localSyncStatus;
     if (status !== "navigating" && status !== "in_sync") return;
-    const result = await this.playback.apply(this.requireSession());
+    const session = this.requireSession();
+    const result = await this.playback.apply(session);
     if (status === "navigating" && result === "applied") {
       await this.setLocalSyncStatus("in_sync");
     } else {
-      await this.handlePlaybackResult(result);
+      await this.handlePlaybackResult(result, {
+        keepHostInSync: session.state?.hostParticipantId === session.participantId,
+      });
     }
   }
 
@@ -194,11 +211,12 @@ export class PartyController {
 
     const isHost = session.state.hostParticipantId === session.participantId;
     if (event.type === "local.ended") {
-      if (isHost) await this.skip();
+      if (isHost) await this.advanceAfterTrackEnd(session.state);
       return;
     }
 
     if (isHost) {
+      if (this.shouldIgnoreHostEventDuringAutoAdvance(event)) return;
       await this.handleHostPlaybackEvent(event);
       return;
     }
@@ -269,18 +287,24 @@ export class PartyController {
   }
 
   private async handleSnapshot(state: PartyRoomState): Promise<void> {
-    if (!this.session) return;
-    const previousPlaybackKey = this.session.state
-      ? playbackKey(this.session.state.playback)
+    const session = this.session;
+    if (!session) return;
+    const previousPlaybackKey = session.state
+      ? playbackKey(session.state.playback)
       : null;
-    this.session.state = state;
+    session.state = state;
     this.mutations.observeRevision(state.revision);
-    this.session.lastError = undefined;
+    session.lastError = undefined;
 
     const playbackChanged = previousPlaybackKey !== playbackKey(state.playback);
-    if (playbackChanged && this.session.localSyncStatus === "in_sync") {
-      const result = await this.playback.reconcile(this.session);
-      await this.handlePlaybackResult(result);
+    if (playbackChanged && session.localSyncStatus === "in_sync") {
+      const result = await this.playback.reconcile(session);
+      await this.handlePlaybackResult(result, {
+        keepHostInSync: state.hostParticipantId === session.participantId,
+      });
+      if (state.hostParticipantId === session.participantId) {
+        this.clearAutoAdvanceAfterCanonicalApply(state, result);
+      }
     }
     this.publishState();
   }
@@ -345,6 +369,51 @@ export class PartyController {
     }));
   }
 
+  private async advanceAfterTrackEnd(state: PartyRoomState): Promise<void> {
+    const key = `${state.revision}:${state.playback.track?.videoId ?? "none"}`;
+    if (this.lastAutoAdvanceKey === key) return;
+    this.lastAutoAdvanceKey = key;
+    this.pendingAutoAdvance = {
+      key,
+      revision: state.revision,
+      startedAtMs: Date.now(),
+    };
+
+    try {
+      await this.skip();
+    } catch (error) {
+      this.lastAutoAdvanceKey = null;
+      this.pendingAutoAdvance = null;
+      throw error;
+    }
+  }
+
+  private shouldIgnoreHostEventDuringAutoAdvance(event: LocalPlaybackEvent): boolean {
+    const pending = this.pendingAutoAdvance;
+    if (!pending) return false;
+    if (Date.now() - pending.startedAtMs > AUTO_ADVANCE_EVENT_SUPPRESSION_MS) {
+      this.pendingAutoAdvance = null;
+      return false;
+    }
+    return (
+      event.type === "local.play" ||
+      event.type === "local.pause" ||
+      event.type === "local.seek" ||
+      event.type === "local.track_changed"
+    );
+  }
+
+  private clearAutoAdvanceAfterCanonicalApply(
+    state: PartyRoomState,
+    result: PlaybackSyncResult,
+  ): void {
+    const pending = this.pendingAutoAdvance;
+    if (!pending) return;
+    if (state.revision <= pending.revision) return;
+    if (result === "track_unavailable" || result === "navigating") return;
+    this.pendingAutoAdvance = null;
+  }
+
   private async handleGuestPlaybackEvent(event: LocalPlaybackEvent): Promise<void> {
     if (this.session?.localSyncStatus !== "in_sync") return;
 
@@ -367,7 +436,17 @@ export class PartyController {
     }
   }
 
-  private async handlePlaybackResult(result: PlaybackSyncResult): Promise<void> {
+  private async handlePlaybackResult(
+    result: PlaybackSyncResult,
+    options: { keepHostInSync?: boolean } = {},
+  ): Promise<void> {
+    if (options.keepHostInSync && result === "track_unavailable") {
+      const session = this.requireSession();
+      session.lastError =
+        "YouTube Music has not loaded the party track yet. Keeping host playback active.";
+      this.publishState();
+      return;
+    }
     if (result === "navigating") {
       await this.setLocalSyncStatus("navigating");
     } else if (result === "track_unavailable") {

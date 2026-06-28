@@ -9,6 +9,7 @@ export default defineConfig({
     host_permissions: [
       "https://music.youtube.com/*",
       "http://localhost:8787/*",
+      "http://127.0.0.1:8797/*",
       "https://*.workers.dev/*",
     ],
     commands: {

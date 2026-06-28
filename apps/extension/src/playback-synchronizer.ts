@@ -37,8 +37,12 @@ export class PlaybackSynchronizer {
 
   async reconcile(session: ActiveSession): Promise<PlaybackSyncResult> {
     const canonical = session.state?.playback;
-    if (!canonical?.track) return "unchanged";
+    if (!canonical) return "unchanged";
     const local = await this.tabs.getPlayback();
+    if (!canonical.track) {
+      if (!local.track || local.paused) return "unchanged";
+      return this.apply(session);
+    }
     const nowMs = Date.now() + session.client.clockOffsetMs;
     if (!canonicalPlaybackNeedsApplication(local, canonical, nowMs)) {
       return "unchanged";
@@ -48,7 +52,7 @@ export class PlaybackSynchronizer {
 
   async apply(session: ActiveSession): Promise<PlaybackSyncResult> {
     const canonical = session.state?.playback;
-    if (!canonical?.track) return "applied";
+    if (!canonical) return "applied";
     const nowMs = Date.now() + session.client.clockOffsetMs;
     const playback: PartyPlaybackState = {
       ...canonical,

@@ -1,7 +1,11 @@
 import type { Track } from "@ytm-party/shared";
-import { findTrackFromTarget, isSongMenuTrigger } from "./selectors";
+import {
+  findTrackFromEvent,
+  findTrackFromTarget,
+  isSongMenuEvent,
+} from "./selectors";
 
-const DEFAULT_SELECTION_TTL_MS = 10_000;
+const DEFAULT_SELECTION_TTL_MS = 2 * 60_000;
 
 type StoredSelection = {
   track: Track;
@@ -61,11 +65,13 @@ export function installTrackSelectionCapture(
   root: Document = document,
 ): () => void {
   const handleContextMenu = (event: MouseEvent) => {
-    store.capture(event.target);
+    const track = findTrackFromEvent(event);
+    if (track) store.remember(track);
   };
   const handlePointerDown = (event: PointerEvent) => {
-    if (!isSongMenuTrigger(event.target)) return;
-    store.capture(event.target);
+    if (!isSongMenuEvent(event)) return;
+    const track = findTrackFromEvent(event);
+    if (track) store.remember(track);
   };
 
   root.addEventListener("contextmenu", handleContextMenu, true);

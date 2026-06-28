@@ -27,11 +27,14 @@ This document describes the current feature set, user and system workflows, diff
 - Explicit **Navigating** and **Reconnecting** states.
 - Independent local volume that is never synchronized.
 - Native-feeling **Add to party queue** action injected into recognized YouTube Music song menus.
+- An anchored on-page queue action when YouTube Music uses an unrecognized private popup implementation.
 - Shadow DOM isolation for the injected menu action so YouTube Music styles cannot corrupt it.
 - Permission-aware menu states that explain when the user is not in a party or guest additions are disabled.
 - Chrome context-menu fallback using the exact latest right-clicked song and matching party permissions.
 - Menu selections expire and are revalidated at click time so stale songs cannot be queued.
-- Targeted popup observation that inspects added menu nodes rather than rescanning the document after every YouTube Music mutation.
+- Menu permission checks wait for the first authoritative room snapshot and work correctly with multiple YouTube Music tabs.
+- Composed-path song capture for menu controls rendered through YouTube Music shadow roots.
+- Targeted popup observation plus bounded delayed scans for added, reused, or asynchronously populated menus.
 - Strict rejection of missing or ambiguous context-song selections.
 - Host reconnection grace period and automatic host transfer.
 - Multiple simultaneous connections for one participant without false disconnects.
@@ -44,6 +47,10 @@ This document describes the current feature set, user and system workflows, diff
 - Absolute room expiration and abandoned-room idle expiration with invite and Durable Object cleanup.
 - Terminal expired-room handling that clears saved extension credentials instead of reconnecting forever.
 - Remote playback event suppression to prevent synchronization feedback loops.
+- Host playback application remains active during slow YouTube Music route changes so programmatic track loads cannot be mistaken for local host actions.
+- Host natural track endings suppress YouTube Music's native auto-next events until a newer party queue snapshot applies.
+- Empty party playback actively pauses local YouTube Music auto-next instead of letting recommendations become party state.
+- A main-world YouTube Music page bridge loads canonical tracks through the real `playerApi.loadVideoById` and verifies `playerApi.getVideoData()` before declaring playback unavailable.
 - Automatic correction of medium playback drift for in-sync guests.
 - Canonical playback reapplication after room changes, navigation, or page reload.
 - Adapter diagnostics through `window.__ytmPartyDiagnostics()`.
@@ -58,7 +65,7 @@ This document describes the current feature set, user and system workflows, diff
 ### Partially Implemented
 
 - Track detection reads page URLs, row links, row video IDs, and player-bar metadata, but every live YouTube Music variant still cannot be guaranteed.
-- Track loading clicks an existing matching link when possible and otherwise navigates to a watch URL.
+- Track loading uses YouTube Music's page player API first and falls back to in-page navigation without reloading the tab.
 - Advertisement and unavailable-track handling uses DOM and media-error heuristics that require broader live validation.
 - Large drift and guest playback changes intentionally require manual rejoin.
 
@@ -107,7 +114,7 @@ Only the host changes shared play, pause, and current-track position. Guests may
 ### Add And Manage Queue Items
 
 1. A user selects a song's three-dot menu or right-clicks a YouTube Music song.
-2. The content script resolves the containing song row and stores the track for up to ten seconds.
+2. The content script resolves the containing song row and stores the track for up to two minutes.
 3. Recognized YouTube Music menus receive an isolated **Add to party queue** action; Chrome's context menu remains the fallback.
 4. The action is enabled for the host or a permitted guest and otherwise displays the reason it is unavailable.
 5. Selecting the action consumes the stored song so it cannot be reused accidentally.
@@ -123,7 +130,7 @@ The host can remove or reorder queue items from the side panel. A permitted skip
 4. The service worker calculates the current canonical position using backend time and clock offset.
 5. The content script reapplies the track, position, and play state while suppressing feedback events.
 
-When a track application requires page navigation, the extension displays **Navigating** until the reloaded content script completes synchronization.
+Track changes use YouTube Music's in-page navigation path, preserving the current tab and content-script session.
 
 ### Recover A Connection
 
@@ -249,12 +256,15 @@ The content script owns YouTube Music DOM and media interaction. The background 
 - `apps/extension/src/session-types.ts`: Defines active, stored, view, connection, and mutation types.
 - `apps/extension/src/tab-gateway.ts`: Encapsulates content-script communication.
 - `apps/extension/src/youtube-music-adapter.ts`: Coordinates playback application, observation, context capture, suppression, and diagnostics.
-- `apps/extension/src/youtube-music/navigation.ts`: Loads tracks through matching links or controlled navigation.
+- `apps/extension/entrypoints/page-bridge.content.ts`: Runs in YouTube Music's main world and exposes safe player commands to the isolated content script.
+- `apps/extension/src/youtube-music/navigation.ts`: Loads tracks through the main-world player bridge or guarded YouTube Music SPA navigation without full-page fallback.
+- `apps/extension/src/youtube-music/page-bridge.ts`: Defines the event bridge used to call YouTube Music's page-owned player API and verify active video IDs.
+- `apps/extension/src/youtube-music/playback-transition.ts`: Distinguishes natural track endings from deliberate host track changes.
 - `apps/extension/src/youtube-music/invite-link.ts`: Reads and removes party invite parameters from YouTube Music URLs.
 - `apps/extension/src/youtube-music/invite-link.test.ts`: Verifies invite URL parsing and cleanup.
 - `apps/extension/src/youtube-music/invite-prompt.ts`: Builds the isolated invite confirmation prompt without using page HTML injection.
 - `apps/extension/src/youtube-music/invite-prompt-styles.ts`: Defines the prompt's Shadow DOM presentation.
-- `apps/extension/src/youtube-music/party-menu.ts`: Observes YouTube Music popups and coordinates injected queue actions.
+- `apps/extension/src/youtube-music/party-menu.ts`: Observes legacy and modern YouTube Music popups, coordinates injected queue actions, and provides the anchored fallback.
 - `apps/extension/src/youtube-music/party-menu-selection.ts`: Revalidates and consumes menu selections immediately before queue mutation.
 - `apps/extension/src/youtube-music/party-menu-selection.test.ts`: Verifies stale or replaced menu selections are rejected.
 - `apps/extension/src/youtube-music/party-menu-styles.ts`: Defines the isolated injected action appearance.
@@ -285,6 +295,6 @@ env XDG_CONFIG_HOME=/tmp npm run build:backend
 env PLAYWRIGHT_BROWSERS_PATH=/tmp/playwright-browsers npm run test:browser
 ```
 
-The suite contains 52 unit and orchestration tests plus six browser/integration scenarios. Browser coverage proves production extension loading, invite preparation and dismissal without automatic joining, representative menu injection, five signed-in surface fixtures, ad and unavailable selectors, two-client realtime room behavior, reconnect recovery, host transfer, and abandoned-room expiry. The authenticated checklist remains necessary because YouTube Music can change private DOM variants independently of this project.
+The suite contains 61 unit and orchestration tests plus six browser/integration scenarios. Browser coverage proves production extension loading, shadow-retargeted menu capture, modern popup insertion, anchored menu fallback, invite preparation and dismissal without automatic joining, six signed-in surface fixtures, ad and unavailable selectors, two-client realtime room behavior, reconnect recovery, host transfer, and abandoned-room expiry. The authenticated checklist remains necessary because YouTube Music can change private DOM variants independently of this project.
 
 `npm audit` reports six advisories in WXT's local `web-ext-run` development chain, for which npm currently offers no patched WXT path. The critical Vitest advisory was removed by upgrading to Vitest 4.1.8. The remaining affected tools are used during local extension development and are not included in the built extension or Worker bundle.

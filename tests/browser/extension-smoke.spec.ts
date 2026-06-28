@@ -60,13 +60,17 @@ test("loads the extension content script on YouTube Music", async () => {
       artist.className = "subtitle";
       artist.textContent = "Synthetic Artist";
 
-      const trigger = document.createElement("button");
-      trigger.type = "button";
-      trigger.setAttribute("aria-label", "More actions");
+      const trigger = document.createElement("div");
+      trigger.dataset.id = "menu";
+      const triggerShadow = trigger.attachShadow({ mode: "open" });
+      const triggerButton = document.createElement("button");
+      triggerButton.type = "button";
+      triggerButton.setAttribute("aria-label", "Action menu");
+      triggerShadow.append(triggerButton);
 
       row.append(link, artist, trigger);
       document.body.append(row);
-      trigger.dispatchEvent(
+      triggerButton.dispatchEvent(
         new PointerEvent("pointerdown", {
           bubbles: true,
           composed: true,
@@ -74,10 +78,10 @@ test("loads the extension content script on YouTube Music", async () => {
       );
 
       const popup = document.createElement("ytmusic-menu-popup-renderer");
-      const items = document.createElement("tp-yt-paper-listbox");
-      items.id = "items";
-      popup.append(items);
       document.body.append(popup);
+      window.setTimeout(() => {
+        popup.append(document.createElement("yt-list-view-model"));
+      }, 100);
     });
 
     const injectedAction = musicPage.locator("[data-ytm-party-menu-action]");
@@ -89,6 +93,67 @@ test("loads the extension content script on YouTube Music", async () => {
     await expect(actionButton).toBeDisabled();
     await expect(actionButton).toContainText("Join or create a party");
 
+    const secondMusicPage = await context.newPage();
+    await secondMusicPage.goto("https://music.youtube.com/", {
+      waitUntil: "domcontentloaded",
+    });
+    await extensionPage.getByRole("button", { name: "Create party" }).click();
+    await expect(extensionPage.getByText("Invite", { exact: true })).toBeVisible();
+
+    await musicPage.evaluate(() => {
+      document.querySelector("ytmusic-menu-popup-renderer")?.remove();
+      document.querySelector("[data-party-test-row]")?.remove();
+      const row = document.createElement("ytmusic-responsive-list-item-renderer");
+      row.setAttribute("data-party-test-row", "");
+      const link = document.createElement("a");
+      link.href = "/watch?v=host-menu-test";
+      link.className = "title";
+      link.textContent = "Host Menu Track";
+      const trigger = document.createElement("button");
+      trigger.setAttribute("aria-label", "More actions");
+      row.append(link, trigger);
+      document.body.append(row);
+      trigger.dispatchEvent(
+        new PointerEvent("pointerdown", {
+          bubbles: true,
+          composed: true,
+        }),
+      );
+      const popup = document.createElement("ytmusic-menu-popup-renderer");
+      popup.append(document.createElement("yt-list-view-model"));
+      document.body.append(popup);
+    });
+
+    const hostAction = musicPage
+      .locator('[data-ytm-party-menu-action][data-ytm-party-track-id="host-menu-test"]')
+      .locator("button");
+    await expect(hostAction).toBeEnabled();
+    await expect(hostAction).toContainText("Add this song for everyone");
+    await musicPage.waitForTimeout(10_500);
+    await expect(hostAction).toBeEnabled();
+    await musicPage.evaluate(() => {
+      document.querySelectorAll("video").forEach((video) => video.remove());
+      document.body.append(document.createElement("video"));
+      document.addEventListener(
+        "yt-navigate",
+        (event) => {
+          const navigation = event as CustomEvent<{
+            endpoint?: { watchEndpoint?: { videoId?: string } };
+          }>;
+          const videoId = navigation.detail.endpoint?.watchEndpoint?.videoId;
+          if (videoId) history.pushState({}, "", `/watch?v=${videoId}`);
+        },
+        { once: true },
+      );
+    });
+    await hostAction.click();
+    await expect(hostAction).toContainText("Added");
+    const startedPlayback = await extensionPage.evaluate(() =>
+      chrome.runtime.sendMessage({ type: "party.getState" }),
+    );
+    expect(startedPlayback.data.state.playback.track.videoId).toBe("host-menu-test");
+    expect(startedPlayback.data.state.queue).toEqual([]);
+
     const selectionDiagnostics = await extensionPage.evaluate(async () => {
       const [tab] = await chrome.tabs.query({
         url: "https://music.youtube.com/*",
@@ -98,9 +163,95 @@ test("loads the extension content script on YouTube Music", async () => {
         type: "content.getDiagnostics",
       });
     });
-    expect(selectionDiagnostics.data.lastContextTrack.videoId).toBe(
-      "party-menu-test",
+    expect(selectionDiagnostics.data.lastContextTrack).toBeNull();
+
+    await musicPage.evaluate(() => {
+      document.querySelector("ytmusic-menu-popup-renderer")?.remove();
+      document.querySelector("[data-party-test-row]")?.remove();
+
+      const row = document.createElement("ytmusic-responsive-list-item-renderer");
+      const link = document.createElement("a");
+      link.href = "/watch?v=party-fallback-test";
+      link.className = "title";
+      link.textContent = "Fallback Party Track";
+      const trigger = document.createElement("div");
+      trigger.dataset.id = "menu";
+      const shadow = trigger.attachShadow({ mode: "open" });
+      const button = document.createElement("button");
+      button.setAttribute("aria-label", "Action menu");
+      shadow.append(button);
+      row.append(link, trigger);
+      document.body.append(row);
+      button.dispatchEvent(
+        new PointerEvent("pointerdown", {
+          bubbles: true,
+          clientX: 120,
+          clientY: 120,
+          composed: true,
+        }),
+      );
+    });
+
+    const fallbackAction = musicPage.locator(
+      "[data-ytm-party-menu-fallback] [data-ytm-party-menu-action]",
     );
+    await expect(fallbackAction).toHaveAttribute(
+      "data-ytm-party-track-id",
+      "party-fallback-test",
+    );
+
+    await musicPage.evaluate(() => {
+      document.querySelectorAll("video").forEach((video) => video.remove());
+      const marker = document.createElement("div");
+      marker.dataset.partyNavigationMarker = "preserved";
+      document.body.append(marker);
+      document.body.append(document.createElement("video"));
+      const app =
+        document.querySelector("ytmusic-app") ??
+        document.body.appendChild(document.createElement("ytmusic-app"));
+      const playerApi = {
+        currentVideoId: "host-menu-test",
+        getVideoData() {
+          return { video_id: this.currentVideoId };
+        },
+        getPlayerResponse() {
+          return { videoDetails: { videoId: this.currentVideoId } };
+        },
+        loadVideoById(videoId: string) {
+          this.currentVideoId = videoId;
+        },
+        pauseVideo() {
+          return undefined;
+        },
+      };
+      Object.defineProperty(app, "playerApi", {
+        configurable: true,
+        value: playerApi,
+      });
+      history.pushState({}, "", "/watch?v=host-menu-test");
+    });
+
+    const navigationResult = await extensionPage.evaluate(async () => {
+      const [tab] = await chrome.tabs.query({
+        url: "https://music.youtube.com/*",
+      });
+      if (!tab?.id) throw new Error("YouTube Music tab was not found.");
+      return chrome.tabs.sendMessage(tab.id, {
+        type: "content.applyPlayback",
+        playback: {
+          track: { videoId: "party-spa-navigation" },
+          paused: true,
+          positionSeconds: 12,
+          effectiveAtMs: Date.now(),
+        },
+      });
+    });
+
+    expect(navigationResult).toEqual({ ok: true, data: "applied" });
+    await expect(musicPage).toHaveURL(/watch\?v=party-spa-navigation/);
+    await expect(
+      musicPage.locator('[data-party-navigation-marker="preserved"]'),
+    ).toHaveCount(1);
   } finally {
     await context.close();
   }

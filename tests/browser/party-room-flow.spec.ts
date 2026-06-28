@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import type { ServerMessage } from "../../packages/shared/src/index";
 import {
+  API_BASE_URL,
   PartyTestClient,
   createTestParty,
   joinTestParty,
@@ -21,7 +22,7 @@ test("two clients share queue, permissions, playback, reconnect, and host transf
     effectiveAtMs: nowMs,
   });
   const joined = await joinTestParty(created.inviteCode, "Guest");
-  const fullPartyResponse = await fetch("http://127.0.0.1:8787/rooms/join", {
+  const fullPartyResponse = await fetch(`${API_BASE_URL}/rooms/join`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -175,7 +176,7 @@ test("abandoned rooms remove their invite mapping after idle expiration", async 
     .poll(
       async () => {
         const response = await fetch(
-          `http://127.0.0.1:8787/rooms/resolve/${created.inviteCode}`,
+          `${API_BASE_URL}/rooms/resolve/${created.inviteCode}`,
         );
         return response.status;
       },

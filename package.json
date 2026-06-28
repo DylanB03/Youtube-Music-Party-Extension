@@ -10,7 +10,7 @@
   "scripts": {
     "check": "npm run check --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
-    "test:browser": "npm run build:extension && playwright test",
+    "test:browser": "WXT_PUBLIC_PARTY_API_BASE_URL=http://127.0.0.1:8797 npm run build:extension && playwright test",
     "dev:backend": "npm --workspace apps/backend run dev",
     "dev:backend:e2e": "npm --workspace apps/backend run dev:e2e",
     "dev:extension": "npm --workspace apps/extension run dev",

@@ -47,5 +47,6 @@ npm run test:browser
 ```
 
 The browser command builds the extension, starts an isolated local Wrangler backend, runs two-client room flows, validates selector fixtures on the YouTube Music origin, and checks extension loading.
+Browser tests use `http://127.0.0.1:8797` so they do not reuse or disturb the normal development backend.
 
 The extension defaults to `http://localhost:8787` for the backend. Override with `WXT_PUBLIC_PARTY_API_BASE_URL` if needed.

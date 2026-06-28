@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
-    "dev:e2e": "wrangler dev --config wrangler.e2e.toml",
+    "dev:e2e": "wrangler dev --config wrangler.e2e.toml --port 8797",
     "build": "wrangler deploy --dry-run",
     "check": "tsc --noEmit",
     "test": "vitest run"
