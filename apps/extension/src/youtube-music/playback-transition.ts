@@ -2,7 +2,23 @@ import type { LocalPlaybackState } from "@ytm-party/shared";
 
 export type PlaybackTransition = "ended" | "track_changed" | null;
 
-const NATURAL_END_THRESHOLD_SECONDS = 3;
+export const NATURAL_END_THRESHOLD_SECONDS = 3;
+
+export function looksLikeNaturalTrackAdvance(
+  previous: LocalPlaybackState,
+  maxObservedPositionSeconds = 0,
+): boolean {
+  const position = Math.max(previous.positionSeconds, maxObservedPositionSeconds);
+  return isNearTrackEnd({ ...previous, positionSeconds: position });
+}
+
+export function isNearTrackEnd(playback: LocalPlaybackState): boolean {
+  const duration = playback.durationSeconds;
+  if (duration && Number.isFinite(duration) && duration > 0) {
+    return duration - playback.positionSeconds <= NATURAL_END_THRESHOLD_SECONDS;
+  }
+  return false;
+}
 
 export class PlaybackTransitionDetector {
   private previous: LocalPlaybackState | null = null;
@@ -30,10 +46,4 @@ export class PlaybackTransitionDetector {
     if (isNearTrackEnd(previous)) return "ended";
     return "track_changed";
   }
-}
-
-function isNearTrackEnd(playback: LocalPlaybackState): boolean {
-  const duration = playback.durationSeconds;
-  if (!duration || !Number.isFinite(duration)) return false;
-  return duration - playback.positionSeconds <= NATURAL_END_THRESHOLD_SECONDS;
 }

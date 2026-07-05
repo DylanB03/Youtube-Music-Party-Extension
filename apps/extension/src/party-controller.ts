@@ -14,6 +14,7 @@ import {
   localToPartyPlayback,
   playbackKey,
 } from "./playback-policy";
+import { isNearTrackEnd, looksLikeNaturalTrackAdvance } from "./youtube-music/playback-transition";
 import type { PlaybackApplicationResult } from "./playback-application";
 import { PartyMutationCoordinator } from "./party-mutation-coordinator";
 import {
@@ -42,9 +43,13 @@ type SessionStoragePort = {
   clear(): Promise<void>;
 };
 type TabGatewayPort = {
-  getPlayback(): Promise<LocalPlaybackState>;
-  applyPlayback(playback: PartyPlaybackState): Promise<PlaybackApplicationResult>;
+  getPlayback(tabId?: number): Promise<LocalPlaybackState>;
+  applyPlayback(
+    playback: PartyPlaybackState,
+    tabId?: number,
+  ): Promise<PlaybackApplicationResult>;
   getContextSong(tabId?: number): Promise<Track | null>;
+  resolveActivePartyTabId(): Promise<number | null>;
 };
 type ConnectionFactory = (credentials: StoredSession) => PartyConnection;
 type PendingAutoAdvance = {
@@ -54,12 +59,21 @@ type PendingAutoAdvance = {
 };
 
 const AUTO_ADVANCE_EVENT_SUPPRESSION_MS = 15_000;
+const EXTERNAL_NAV_DEFER_MS = 1_500;
 
 export class PartyController {
   private session: ActiveSession | null = null;
   private terminalError: string | undefined;
+  private partyTabId: number | null = null;
   private lastAutoAdvanceKey: string | null = null;
   private pendingAutoAdvance: PendingAutoAdvance | null = null;
+  private hostRequeueInFlight = false;
+  private hostResumeInFlight = false;
+  private externalNavTimer: ReturnType<typeof setTimeout> | null = null;
+  private hostCanonicalMaxTrackId: string | null = null;
+  private hostCanonicalMaxPositionSeconds = 0;
+  private lastHostCanonicalPlayback: LocalPlaybackState | null = null;
+  private lastHostLocalPlayback: LocalPlaybackState | null = null;
   private readonly mutations = new PartyMutationCoordinator();
   private readonly playback: PlaybackSynchronizer;
 
@@ -81,7 +95,8 @@ export class PartyController {
 
   async createParty(displayName: string): Promise<SessionView> {
     this.terminalError = undefined;
-    const local = await this.tabs.getPlayback();
+    this.partyTabId = await this.tabs.resolveActivePartyTabId();
+    const local = await this.tabs.getPlayback(this.partyTabId ?? undefined);
     const initialPlayback: PartyPlaybackState = {
       track: local.track,
       paused: local.paused,
@@ -101,6 +116,7 @@ export class PartyController {
 
   async joinParty(inviteCode: string, displayName: string): Promise<SessionView> {
     this.terminalError = undefined;
+    this.partyTabId = await this.tabs.resolveActivePartyTabId();
     const joined = await this.api.joinRoom(inviteCode, displayName);
     await this.connect({
       roomId: joined.roomId,
@@ -113,9 +129,11 @@ export class PartyController {
   }
 
   async leaveParty(): Promise<SessionView> {
+    this.resetPlaybackRuntimeState();
     this.session?.client.disconnect();
     this.session = null;
     this.terminalError = undefined;
+    this.partyTabId = null;
     this.mutations.reset();
     await this.storage.clear();
     this.publishState();
@@ -124,12 +142,53 @@ export class PartyController {
 
   async joinPlayback(): Promise<SessionView> {
     const session = this.requireSession();
-    const result = await this.playback.apply(session);
-    if (result === "applied") await this.setLocalSyncStatus("in_sync");
-    else {
-      await this.handlePlaybackResult(result, {
-        keepHostInSync: session.state?.hostParticipantId === session.participantId,
-      });
+    const result = await this.playback.apply(session, this.partyTabId ?? undefined);
+    if (this.session !== session) return this.getView();
+    if (result === "applied") {
+      if (session.state?.hostParticipantId === session.participantId) {
+        this.clearAutoAdvanceAfterCanonicalApply(session.state, result);
+      }
+      await this.setLocalSyncStatus("in_sync");
+    } else {
+      await this.handlePlaybackResult(result);
+    }
+    return this.getView();
+  }
+
+  async resumePlayback(): Promise<SessionView> {
+    const session = this.requireSession();
+    if (!session.state?.queue.length) {
+      session.lastError = "Add a song to the queue, then resume.";
+      this.publishState();
+      return this.getView();
+    }
+
+    this.cancelDeferredExternalNavigation();
+    this.hostResumeInFlight = true;
+    try {
+      await this.skip();
+      if (this.session !== session) return this.getView();
+      const playback = await this.waitForCanonicalPlayback(session);
+      if (this.session !== session) return this.getView();
+      if (!playback?.track) {
+        session.lastError = "Add a song to the queue, then resume.";
+        this.publishState();
+        return this.getView();
+      }
+
+      await this.setLocalSyncStatus("navigating");
+      this.resetHostCanonicalTracking(playback.track.videoId);
+      const result = await this.playback.apply(session, this.partyTabId ?? undefined);
+      if (result === "applied") {
+        await this.setLocalSyncStatus("in_sync");
+      } else if (result === "track_unavailable") {
+        session.lastError = "Could not load the party track. Try again.";
+        await this.setLocalSyncStatus("track_unavailable");
+      }
+    } finally {
+      if (this.session === session) {
+        this.hostResumeInFlight = false;
+      }
     }
     return this.getView();
   }
@@ -191,36 +250,38 @@ export class PartyController {
     await this.addTrack(track);
   }
 
-  async handleContentReady(): Promise<void> {
+  async handleContentReady(tabId?: number): Promise<void> {
+    this.adoptPartyTab(tabId);
     const status = this.session?.localSyncStatus;
     if (status !== "navigating" && status !== "in_sync") return;
     const session = this.requireSession();
-    const result = await this.playback.apply(session);
+    const result = await this.playback.apply(session, this.partyTabId ?? undefined);
+    if (this.session !== session) return;
+    if (session.state?.hostParticipantId === session.participantId) {
+      this.clearAutoAdvanceAfterCanonicalApply(session.state, result);
+    }
     if (status === "navigating" && result === "applied") {
       await this.setLocalSyncStatus("in_sync");
     } else {
-      await this.handlePlaybackResult(result, {
-        keepHostInSync: session.state?.hostParticipantId === session.participantId,
-      });
+      await this.handlePlaybackResult(result);
     }
   }
 
-  async handleLocalPlaybackEvent(event: LocalPlaybackEvent): Promise<void> {
+  async handleLocalPlaybackEvent(
+    event: LocalPlaybackEvent,
+    tabId?: number,
+  ): Promise<void> {
     const session = this.session;
     if (!session?.state) return;
+    if (!this.adoptOrMatchesPartyTab(tabId)) return;
 
     const isHost = session.state.hostParticipantId === session.participantId;
-    if (event.type === "local.ended") {
-      if (isHost) await this.advanceAfterTrackEnd(session.state);
-      return;
-    }
-
     if (isHost) {
-      if (this.shouldIgnoreHostEventDuringAutoAdvance(event)) return;
-      await this.handleHostPlaybackEvent(event);
+      await this.handleHostLocalEvent(session, event);
       return;
     }
 
+    if (event.type === "local.ended") return;
     await this.handleGuestPlaybackEvent(event);
   }
 
@@ -254,6 +315,7 @@ export class PartyController {
   }
 
   private async connect(credentials: StoredSession): Promise<void> {
+    this.resetPlaybackRuntimeState();
     this.session?.client.disconnect();
     this.mutations.reset();
     const client = this.createConnection(credentials);
@@ -268,14 +330,16 @@ export class PartyController {
     };
 
     client.onSnapshot((state) => {
+      if (this.session?.client !== client) return;
       void this.handleSnapshot(state);
     });
     client.onError((message) => {
-      if (!this.session) return;
+      if (this.session?.client !== client) return;
       this.session.lastError = message;
       this.publishState();
     });
     client.onConnectionState((state) => {
+      if (this.session?.client !== client) return;
       void this.handleConnectionState(state);
     });
     client.connect();
@@ -297,13 +361,27 @@ export class PartyController {
     session.lastError = undefined;
 
     const playbackChanged = previousPlaybackKey !== playbackKey(state.playback);
-    if (playbackChanged && session.localSyncStatus === "in_sync") {
-      const result = await this.playback.reconcile(session);
-      await this.handlePlaybackResult(result, {
-        keepHostInSync: state.hostParticipantId === session.participantId,
-      });
+    if (
+      playbackChanged &&
+      this.shouldReconcileCanonicalPlayback(session, state)
+    ) {
+      const result = await this.playback.reconcile(
+        session,
+        this.partyTabId ?? undefined,
+      );
+      if (this.session !== session) return;
+      await this.handlePlaybackResult(result);
+      if (this.session !== session) return;
       if (state.hostParticipantId === session.participantId) {
         this.clearAutoAdvanceAfterCanonicalApply(state, result);
+      }
+      if (
+        !this.hostResumeInFlight &&
+        session.localSyncStatus === "ready_to_resume" &&
+        result === "applied" &&
+        state.playback.track
+      ) {
+        await this.setLocalSyncStatus("in_sync");
       }
     }
     this.publishState();
@@ -316,8 +394,10 @@ export class PartyController {
     if (!session) return;
 
     if (state === "expired") {
+      this.resetPlaybackRuntimeState();
       session.client.disconnect();
       this.session = null;
+      this.partyTabId = null;
       this.mutations.reset();
       this.terminalError = "This party has expired. Create or join another party.";
       await this.storage.clear();
@@ -350,6 +430,220 @@ export class PartyController {
     this.publishState();
   }
 
+  private async handleHostLocalEvent(
+    session: ActiveSession,
+    event: LocalPlaybackEvent,
+  ): Promise<void> {
+    // Ignore every transient native event until the authoritative next party
+    // track has actually been applied. Otherwise progress or duplicate ended
+    // events from YouTube Music's auto-next can skip multiple queued songs.
+    if (this.shouldIgnoreHostEventDuringAutoAdvance()) return;
+
+    const previousLocal = this.lastHostLocalPlayback;
+    this.lastHostLocalPlayback = event.playback;
+    const canonical = session.state?.playback;
+    if (canonical) this.recordHostCanonicalProgress(event.playback, canonical);
+
+    // While waiting for the host to select Resume, their local playback is
+    // intentionally local-only: it must not advance the queue or overwrite the
+    // canonical playback state.
+    if (session.localSyncStatus === "ready_to_resume") return;
+
+    if (event.type === "local.ended") {
+      this.cancelDeferredExternalNavigation();
+      if (session.state) await this.advanceAfterTrackEnd(session.state);
+      return;
+    }
+
+    const canonicalTrackId = canonical?.track?.videoId;
+    const localTrackId = event.playback.track?.videoId;
+    const playbackDiverged = Boolean(
+      canonicalTrackId && localTrackId && canonicalTrackId !== localTrackId,
+    );
+    const hasCanonicalEndEvidence = Boolean(
+      canonicalTrackId &&
+        this.lastHostCanonicalPlayback?.track?.videoId === canonicalTrackId &&
+        looksLikeNaturalTrackAdvance(
+          this.lastHostCanonicalPlayback,
+          this.hostCanonicalMaxPositionSeconds,
+        ),
+    );
+
+    if (playbackDiverged && hasCanonicalEndEvidence) {
+      this.cancelDeferredExternalNavigation();
+      if (session.state) await this.advanceAfterTrackEnd(session.state);
+      return;
+    }
+
+    // A playing wrong track must never remain invisible if YouTube Music drops
+    // both ended and track-changed events. Progress is recurring evidence that
+    // native auto-next escaped; in a party, the authoritative queue wins.
+    if (
+      playbackDiverged &&
+      event.type === "local.progress" &&
+      this.externalNavTimer === null
+    ) {
+      this.cancelDeferredExternalNavigation();
+      if (session.state) await this.advanceAfterTrackEnd(session.state);
+      return;
+    }
+
+    if (canonical && this.isExternalHostNavigation(event, canonical, previousLocal)) {
+      if (session.localSyncStatus === "in_sync") {
+        this.scheduleDeferredExternalNavigation();
+        return;
+      }
+      await this.handleHostExternalNavigation();
+      return;
+    }
+
+    await this.handleHostPlaybackEvent(event);
+  }
+
+  // Detects the host manually switching to a different song outside the
+  // extension. Only `local.track_changed` qualifies: the adapter classifies an
+  // end-of-track transition (YouTube Music auto-advancing to its own next song)
+  // as `local.ended`, so a `track_changed` is always a deliberate mid-song
+  // switch. Reacting to play/seek/pause here would race the auto-advance, since
+  // YouTube Music fires `local.play` for its auto-next song before the poll can
+  // emit `local.ended`.
+  private isExternalHostNavigation(
+    event: LocalPlaybackEvent,
+    canonical: PartyPlaybackState,
+    previousLocal: LocalPlaybackState | null,
+  ): boolean {
+    if (event.type !== "local.track_changed") return false;
+    if (this.pendingAutoAdvance) return false;
+    const localTrack = event.playback.track;
+    if (!localTrack || !canonical.track) return false;
+    if (previousLocal?.track?.videoId === canonical.track.videoId && isNearTrackEnd(previousLocal)) {
+      return false;
+    }
+    return localTrack.videoId !== canonical.track.videoId;
+  }
+
+  private shouldReconcileCanonicalPlayback(
+    session: ActiveSession,
+    state: PartyRoomState,
+  ): boolean {
+    if (this.hostResumeInFlight || this.hostRequeueInFlight) return false;
+    if (session.localSyncStatus === "in_sync") return true;
+    // After a host requeue the party has no current track until the host resumes
+    // or adds a song. Apply server-selected playback in those cases.
+    if (
+      session.localSyncStatus === "ready_to_resume" &&
+      state.playback.track !== null
+    ) {
+      return true;
+    }
+    return false;
+  }
+
+  private recordHostCanonicalProgress(
+    playback: LocalPlaybackState,
+    canonical: PartyPlaybackState,
+  ): void {
+    const videoId = canonical.track?.videoId;
+    if (!videoId || playback.track?.videoId !== videoId) return;
+    this.lastHostCanonicalPlayback = playback;
+    if (this.hostCanonicalMaxTrackId !== videoId) {
+      this.hostCanonicalMaxTrackId = videoId;
+      this.hostCanonicalMaxPositionSeconds = 0;
+    }
+    this.hostCanonicalMaxPositionSeconds = Math.max(
+      this.hostCanonicalMaxPositionSeconds,
+      playback.positionSeconds,
+    );
+  }
+
+  private resetHostCanonicalTracking(videoId: string): void {
+    this.hostCanonicalMaxTrackId = videoId;
+    this.hostCanonicalMaxPositionSeconds = 0;
+    this.lastHostCanonicalPlayback = null;
+    this.lastHostLocalPlayback = null;
+  }
+
+  private cancelDeferredExternalNavigation(): void {
+    if (!this.externalNavTimer) return;
+    clearTimeout(this.externalNavTimer);
+    this.externalNavTimer = null;
+  }
+
+  private resetPlaybackRuntimeState(): void {
+    this.cancelDeferredExternalNavigation();
+    this.lastAutoAdvanceKey = null;
+    this.pendingAutoAdvance = null;
+    this.hostRequeueInFlight = false;
+    this.hostResumeInFlight = false;
+    this.hostCanonicalMaxTrackId = null;
+    this.hostCanonicalMaxPositionSeconds = 0;
+    this.lastHostCanonicalPlayback = null;
+    this.lastHostLocalPlayback = null;
+  }
+
+  private scheduleDeferredExternalNavigation(): void {
+    this.cancelDeferredExternalNavigation();
+    const session = this.session;
+    this.externalNavTimer = setTimeout(() => {
+      this.externalNavTimer = null;
+      if (this.session !== session) return;
+      void this.handleHostExternalNavigation();
+    }, EXTERNAL_NAV_DEFER_MS);
+  }
+
+  private async waitForCanonicalPlayback(
+    session: ActiveSession,
+  ): Promise<PartyPlaybackState | null> {
+    const deadline = Date.now() + 5_000;
+    while (Date.now() < deadline && this.session === session) {
+      const playback = session.state?.playback;
+      if (playback?.track) return playback;
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, 50);
+      });
+    }
+    return this.session === session ? session.state?.playback ?? null : null;
+  }
+
+  private async handleHostExternalNavigation(): Promise<void> {
+    const session = this.session;
+    if (!session?.state || session.localSyncStatus !== "in_sync") return;
+
+    const canonical = session.state.playback;
+    if (!canonical.track) return;
+    const localTrackId = this.lastHostLocalPlayback?.track?.videoId;
+    if (!localTrackId || localTrackId === canonical.track.videoId) return;
+
+    // Guard against the burst of deliberate events YouTube Music fires for a
+    // single manual track change (e.g. play + track_changed) enqueuing the
+    // requeue more than once during the in-flight round trip.
+    if (this.hostRequeueInFlight) return;
+    this.hostRequeueInFlight = true;
+    try {
+      const observedTrack = this.lastHostCanonicalPlayback?.track;
+      const requeueTrack =
+        observedTrack?.videoId === canonical.track.videoId
+          ? {
+              ...canonical.track,
+              title: observedTrack.title ?? canonical.track.title,
+              artist: observedTrack.artist ?? canonical.track.artist,
+            }
+          : canonical.track;
+      await this.enqueueMutation((operationId, expectedRevision) => ({
+        type: "playback.host_requeue",
+        operationId,
+        track: requeueTrack,
+        expectedRevision,
+      }));
+      if (this.session !== session) return;
+      await this.setLocalSyncStatus("ready_to_resume");
+    } finally {
+      if (this.session === session) {
+        this.hostRequeueInFlight = false;
+      }
+    }
+  }
+
   private async handleHostPlaybackEvent(event: LocalPlaybackEvent): Promise<void> {
     if (
       event.type !== "local.play" &&
@@ -361,6 +655,17 @@ export class PartyController {
     }
     if (!event.playback.track) return;
 
+    // Ignore play/pause/seek that reference a different track than the party's
+    // current song. These fire transiently when YouTube Music auto-advances at
+    // the end of a track (before the adapter emits `local.ended`) or right
+    // after a manual switch (before `local.track_changed`); promoting them to
+    // canonical host state would clobber the party with YouTube Music's own
+    // next song. Seeding an empty party (canonical track null) is still allowed.
+    const canonicalTrack = this.session?.state?.playback.track;
+    if (canonicalTrack && event.playback.track.videoId !== canonicalTrack.videoId) {
+      return;
+    }
+
     await this.enqueueMutation((operationId, expectedRevision) => ({
       type: "playback.host_state",
       operationId,
@@ -370,6 +675,8 @@ export class PartyController {
   }
 
   private async advanceAfterTrackEnd(state: PartyRoomState): Promise<void> {
+    const session = this.session;
+    if (!session) return;
     const key = `${state.revision}:${state.playback.track?.videoId ?? "none"}`;
     if (this.lastAutoAdvanceKey === key) return;
     this.lastAutoAdvanceKey = key;
@@ -382,25 +689,22 @@ export class PartyController {
     try {
       await this.skip();
     } catch (error) {
-      this.lastAutoAdvanceKey = null;
-      this.pendingAutoAdvance = null;
+      if (this.session === session) {
+        this.lastAutoAdvanceKey = null;
+        this.pendingAutoAdvance = null;
+      }
       throw error;
     }
   }
 
-  private shouldIgnoreHostEventDuringAutoAdvance(event: LocalPlaybackEvent): boolean {
+  private shouldIgnoreHostEventDuringAutoAdvance(): boolean {
     const pending = this.pendingAutoAdvance;
     if (!pending) return false;
     if (Date.now() - pending.startedAtMs > AUTO_ADVANCE_EVENT_SUPPRESSION_MS) {
       this.pendingAutoAdvance = null;
       return false;
     }
-    return (
-      event.type === "local.play" ||
-      event.type === "local.pause" ||
-      event.type === "local.seek" ||
-      event.type === "local.track_changed"
-    );
+    return true;
   }
 
   private clearAutoAdvanceAfterCanonicalApply(
@@ -428,7 +732,9 @@ export class PartyController {
         return;
 
       case "correct_drift":
-        await this.handlePlaybackResult(await this.playback.apply(this.session));
+        await this.handlePlaybackResult(
+          await this.playback.apply(this.session, this.partyTabId ?? undefined),
+        );
         return;
 
       case "ignore":
@@ -438,15 +744,7 @@ export class PartyController {
 
   private async handlePlaybackResult(
     result: PlaybackSyncResult,
-    options: { keepHostInSync?: boolean } = {},
   ): Promise<void> {
-    if (options.keepHostInSync && result === "track_unavailable") {
-      const session = this.requireSession();
-      session.lastError =
-        "YouTube Music has not loaded the party track yet. Keeping host playback active.";
-      this.publishState();
-      return;
-    }
     if (result === "navigating") {
       await this.setLocalSyncStatus("navigating");
     } else if (result === "track_unavailable") {
@@ -467,6 +765,21 @@ export class PartyController {
       localSyncStatus: status,
     });
     this.publishState();
+  }
+
+  private adoptPartyTab(tabId?: number): void {
+    if (this.session && tabId != null && this.partyTabId === null) {
+      this.partyTabId = tabId;
+    }
+  }
+
+  // Binds the first reporting YouTube Music tab as the party tab and ignores
+  // playback events from any other tab so a second open tab cannot hijack the
+  // shared session. Events without a tab id (e.g. unit tests) always match.
+  private adoptOrMatchesPartyTab(tabId?: number): boolean {
+    if (tabId == null) return true;
+    this.adoptPartyTab(tabId);
+    return this.partyTabId === null || this.partyTabId === tabId;
   }
 
   private requireSession(): ActiveSession {

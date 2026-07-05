@@ -1,8 +1,8 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
 import type { RoomPermissions } from "@ytm-party/shared";
-import { apiUrl } from "../../src/config";
 import "./styles.css";
+import { InviteCodeButton } from "./invite-code-button";
 import { PartySetupCard } from "./party-setup-card";
 import { PermissionToggle } from "./permission-toggle";
 import { QueueCard } from "./queue-card";
@@ -30,10 +30,6 @@ function App() {
     );
   }
 
-  const inviteUrl = view.state?.inviteCode
-    ? apiUrl(`/join/${view.state.inviteCode}`)
-    : undefined;
-
   return (
     <main className="panel">
       <section className="hero">
@@ -41,6 +37,17 @@ function App() {
         <h1>Listen together without passing the aux cord around.</h1>
         <p className="muted">Create a room, share a code, and keep everyone on the same track.</p>
       </section>
+
+      {view.roomId ? (
+        <section className="card stack">
+          <p className="label">Invite</p>
+          <InviteCodeButton
+            inviteCode={view.state?.inviteCode ?? "------"}
+            disabled={Boolean(pendingAction) || !view.state?.inviteCode}
+            reportFeedback={reportFeedback}
+          />
+        </section>
+      ) : null}
 
       {feedback ? (
         <button
@@ -78,7 +85,7 @@ function App() {
               joining a different one.
             </p>
           ) : null}
-          <section className="card">
+          <section className="card stack status-card">
             <div className="status-row">
               <div>
                 <p className="label">Status</p>
@@ -117,13 +124,45 @@ function App() {
                     : "Rejoin playback"}
                 </button>
               ) : null}
-            </div>
-            <p className="now-playing">
-              {view.state?.playback.track?.title ?? "No song selected yet"}
-              {view.state?.playback.track?.artist ? (
-                <span> by {view.state.playback.track.artist}</span>
+              {view.localSyncStatus === "ready_to_resume" &&
+              pendingAction !== "resume-playback" ? (
+                <button
+                  className="primary"
+                  disabled={Boolean(pendingAction)}
+                  onClick={() =>
+                    act(
+                      "resume-playback",
+                      { type: "party.resumePlayback" },
+                      "Playback resumed.",
+                    )
+                  }
+                >
+                  Resume
+                </button>
               ) : null}
-            </p>
+            </div>
+            <div className="now-playing-row">
+              <p className="now-playing">
+                {view.state?.playback.track?.title ?? "No song selected yet"}
+                {view.state?.playback.track?.artist ? (
+                  <span> by {view.state.playback.track.artist}</span>
+                ) : null}
+              </p>
+              <button
+                className="compact"
+                disabled={!canSkip || Boolean(pendingAction)}
+                title={
+                  canSkip
+                    ? "Play the next queued song"
+                    : "The host has disabled guest skipping"
+                }
+                onClick={() =>
+                  act("skip", { type: "party.skip" }, "Skipped to the next song.")
+                }
+              >
+                Skip
+              </button>
+            </div>
             <button
               className="quiet"
               disabled={Boolean(pendingAction)}
@@ -135,55 +174,36 @@ function App() {
             </button>
           </section>
 
-          <section className="card stack">
-            <p className="label">Invite</p>
-            <div className="invite-code">{view.state?.inviteCode ?? "------"}</div>
-            {inviteUrl ? (
-              <button
-                disabled={Boolean(pendingAction)}
-                onClick={async () => {
-                  try {
-                    await navigator.clipboard.writeText(inviteUrl);
-                    await act("copy-invite", { type: "party.getState" }, "Invite link copied.");
-                  } catch {
-                    reportFeedback({
-                      kind: "error",
-                      message: "The invite link could not be copied.",
-                    });
-                  }
-                }}
-              >
-                {pendingAction === "copy-invite" ? "Copying..." : "Copy link"}
-              </button>
-            ) : null}
-          </section>
-
           {isHost && view.state ? (
             <section className="card stack">
               <p className="label">Guest permissions</p>
-              <PermissionToggle
-                label="Guests can skip songs"
-                checked={view.state.permissions.guestsCanSkip}
-                disabled={Boolean(pendingAction)}
-                onChange={(guestsCanSkip) =>
-                  updatePermissions({ ...view.state!.permissions, guestsCanSkip })
-                }
-              />
-              <PermissionToggle
-                label="Guests can add songs"
-                checked={view.state.permissions.guestsCanAddToQueue}
-                disabled={Boolean(pendingAction)}
-                onChange={(guestsCanAddToQueue) =>
-                  updatePermissions({ ...view.state!.permissions, guestsCanAddToQueue })
-                }
-              />
+              <div className="permission-options">
+                <PermissionToggle
+                  label="Skip songs"
+                  checked={view.state.permissions.guestsCanSkip}
+                  disabled={Boolean(pendingAction)}
+                  onChange={(guestsCanSkip) =>
+                    updatePermissions({ ...view.state!.permissions, guestsCanSkip })
+                  }
+                />
+                <PermissionToggle
+                  label="Add songs"
+                  checked={view.state.permissions.guestsCanAddToQueue}
+                  disabled={Boolean(pendingAction)}
+                  onChange={(guestsCanAddToQueue) =>
+                    updatePermissions({
+                      ...view.state!.permissions,
+                      guestsCanAddToQueue,
+                    })
+                  }
+                />
+              </div>
             </section>
           ) : null}
 
           <QueueCard
             state={view.state}
             isHost={isHost}
-            canSkip={canSkip}
             pendingAction={pendingAction}
             act={act}
           />

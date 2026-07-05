@@ -12,6 +12,7 @@ import {
 import { PartyController } from "../src/party-controller";
 import { PendingInviteStorage } from "../src/pending-invite-storage";
 import { SessionStorage } from "../src/session-storage";
+import { installSidePanelGating } from "../src/side-panel-gating";
 import { YouTubeMusicTabGateway } from "../src/tab-gateway";
 
 const partyApi = new PartyApi();
@@ -66,6 +67,7 @@ async function initializeBackground(): Promise<void> {
   });
 
   await browser.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
+  installSidePanelGating();
   await controller.initialize();
 }
 
@@ -114,6 +116,9 @@ async function handleMessage(
     case "party.rejoinPlayback":
       return controller.joinPlayback();
 
+    case "party.resumePlayback":
+      return controller.resumePlayback();
+
     case "party.updatePermissions":
       return controller.updatePermissions(message.permissions);
 
@@ -130,11 +135,11 @@ async function handleMessage(
       return controller.skip();
 
     case "content.localPlaybackEvent":
-      await controller.handleLocalPlaybackEvent(message.event);
+      await controller.handleLocalPlaybackEvent(message.event, sender?.tab?.id);
       return null;
 
     case "content.ready":
-      await controller.handleContentReady();
+      await controller.handleContentReady(sender?.tab?.id);
       return null;
 
     default:

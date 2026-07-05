@@ -6,8 +6,11 @@ import type {
 } from "@ytm-party/shared";
 import type { PlaybackApplicationResult } from "./playback-application";
 import { loadTrack, waitForMedia } from "./youtube-music/navigation";
-import { pausePagePlayer } from "./youtube-music/page-bridge";
-import { PlaybackTransitionDetector } from "./youtube-music/playback-transition";
+import {
+  getPagePlayerTrack,
+  pausePagePlayer,
+} from "./youtube-music/page-bridge";
+import { PlaybackTransitionDetector, isNearTrackEnd } from "./youtube-music/playback-transition";
 import {
   findMediaElement,
   inspectSelectorCoverage,
@@ -20,6 +23,7 @@ type Listener = (event: LocalPlaybackEvent) => void;
 let lastInterruption: LocalPlaybackState["interruption"];
 let suppressLocalEventsUntilMs = 0;
 let activePlaybackApplications = 0;
+let lastPagePlayerTrack: Track | null = null;
 
 export async function applyPlayback(
   playback: PartyPlaybackState,
@@ -53,19 +57,31 @@ export function observePlayback(listener: Listener): () => void {
   let observedMedia: HTMLMediaElement | null = null;
   let removeMediaListeners: (() => void) | null = null;
   let lastProgressAtMs = 0;
+  let nearNaturalEndLatch = false;
+  let pollInFlight = false;
   const transitions = new PlaybackTransitionDetector();
 
   const emit = (type: LocalPlaybackEvent["type"]) => {
     if (shouldSuppressLocalEvents()) return;
-    listener({ type, playback: readPlaybackState() } as LocalPlaybackEvent);
+    listener({
+      type,
+      playback: readPlaybackState(lastPagePlayerTrack),
+    } as LocalPlaybackEvent);
   };
 
   const bindMedia = (media: HTMLMediaElement) => {
     const onPlay = () => emit("local.play");
     const onPause = () => emit("local.pause");
-    const onSeek = () => emit("local.seek");
+    const latchNearEnd = () => {
+      const playback = readPlaybackState(lastPagePlayerTrack);
+      if (isNearTrackEnd(playback)) nearNaturalEndLatch = true;
+    };
+    const onSeek = () => {
+      latchNearEnd();
+      emit("local.seek");
+    };
     const onEnded = () => {
-      const playback = readPlaybackState();
+      const playback = readPlaybackState(lastPagePlayerTrack);
       transitions.recordEnded(playback);
       if (!shouldSuppressLocalEvents()) {
         listener({ type: "local.ended", playback });
@@ -74,6 +90,7 @@ export function observePlayback(listener: Listener): () => void {
     const onWaiting = () => emit("local.buffering");
     const onError = () => emit("local.interruption");
     const onTimeUpdate = () => {
+      latchNearEnd();
       if (Date.now() - lastProgressAtMs < 2000) return;
       lastProgressAtMs = Date.now();
       emit("local.progress");
@@ -81,6 +98,7 @@ export function observePlayback(listener: Listener): () => void {
 
     media.addEventListener("play", onPlay);
     media.addEventListener("pause", onPause);
+    media.addEventListener("seeking", latchNearEnd);
     media.addEventListener("seeked", onSeek);
     media.addEventListener("ended", onEnded);
     media.addEventListener("waiting", onWaiting);
@@ -90,6 +108,7 @@ export function observePlayback(listener: Listener): () => void {
     removeMediaListeners = () => {
       media.removeEventListener("play", onPlay);
       media.removeEventListener("pause", onPause);
+      media.removeEventListener("seeking", latchNearEnd);
       media.removeEventListener("seeked", onSeek);
       media.removeEventListener("ended", onEnded);
       media.removeEventListener("waiting", onWaiting);
@@ -98,26 +117,47 @@ export function observePlayback(listener: Listener): () => void {
     };
   };
 
-  const interval = window.setInterval(() => {
-    const media = findMediaElement();
-    if (media && media !== observedMedia) {
-      removeMediaListeners?.();
-      observedMedia = media;
-      bindMedia(media);
-    }
+  const pollPlayback = async () => {
+    if (pollInFlight) return;
+    pollInFlight = true;
+    try {
+      const pagePlayerTrack = await getPagePlayerTrack();
+      if (pagePlayerTrack) lastPagePlayerTrack = pagePlayerTrack;
 
-    const playback = readPlaybackState();
-    const transition = transitions.observe(playback);
-    if (transition === "ended") {
-      emit("local.ended");
-    } else if (transition === "track_changed") {
-      emit("local.track_changed");
+      const media = findMediaElement();
+      if (media && media !== observedMedia) {
+        removeMediaListeners?.();
+        observedMedia = media;
+        bindMedia(media);
+      }
+
+      const playback = readPlaybackState(lastPagePlayerTrack);
+      const transition = transitions.observe(playback);
+      if (
+        transition === "ended" ||
+        (transition === "track_changed" && nearNaturalEndLatch)
+      ) {
+        nearNaturalEndLatch = false;
+        emit("local.ended");
+      } else if (transition === "track_changed") {
+        emit("local.track_changed");
+      }
+      if (playback.interruption && playback.interruption !== lastInterruption) {
+        emit("local.interruption");
+      }
+      lastInterruption = playback.interruption;
+    } catch {
+      // The page bridge can be unavailable briefly while YouTube Music boots.
+      // Media event listeners continue using the last verified player video ID.
+    } finally {
+      pollInFlight = false;
     }
-    if (playback.interruption && playback.interruption !== lastInterruption) {
-      emit("local.interruption");
-    }
-    lastInterruption = playback.interruption;
+  };
+
+  const interval = window.setInterval(() => {
+    void pollPlayback();
   }, 500);
+  void pollPlayback();
 
   return () => {
     removeMediaListeners?.();
@@ -131,9 +171,10 @@ export function getAdapterDiagnostics(
   const media = findMediaElement();
   return {
     href: location.href,
-    currentTrack: readCurrentTrack(),
+    currentTrack: readCurrentTrack(lastPagePlayerTrack),
+    pagePlayerVideoId: lastPagePlayerTrack?.videoId ?? null,
     lastContextTrack: selectedTrack,
-    playback: readPlaybackState(),
+    playback: readPlaybackState(lastPagePlayerTrack),
     mediaReadyState: media?.readyState ?? null,
     mediaNetworkState: media?.networkState ?? null,
     suppressingLocalEvents: shouldSuppressLocalEvents(),
@@ -143,8 +184,14 @@ export function getAdapterDiagnostics(
   };
 }
 
-export function getPlaybackState(): LocalPlaybackState {
-  return readPlaybackState();
+export async function getPlaybackState(): Promise<LocalPlaybackState> {
+  try {
+    const pagePlayerTrack = await getPagePlayerTrack();
+    if (pagePlayerTrack) lastPagePlayerTrack = pagePlayerTrack;
+  } catch {
+    // Fall back to the URL until the page-owned player API is ready.
+  }
+  return readPlaybackState(lastPagePlayerTrack);
 }
 
 function shouldSuppressLocalEvents(): boolean {

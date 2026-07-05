@@ -53,6 +53,22 @@ describe("guest playback policy", () => {
     );
   });
 
+  it("marks a guest on the wrong track out of sync even at the expected position", () => {
+    const event: LocalPlaybackEvent = {
+      type: "local.progress",
+      playback: {
+        track: { videoId: "wrong-track" },
+        paused: false,
+        positionSeconds: 12,
+        buffering: false,
+      },
+    };
+
+    expect(decideGuestPlaybackAction(event, canonical, 3_000)).toBe(
+      "out_of_sync",
+    );
+  });
+
   it("applies canonical playback when track or pause state differs", () => {
     expect(
       canonicalPlaybackNeedsApplication(

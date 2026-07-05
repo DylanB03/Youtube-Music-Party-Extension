@@ -211,14 +211,28 @@ test("loads the extension content script on YouTube Music", async () => {
         document.body.appendChild(document.createElement("ytmusic-app"));
       const playerApi = {
         currentVideoId: "host-menu-test",
+        currentTitle: "Host Menu Track",
+        currentArtist: "Host Menu Artist",
         getVideoData() {
-          return { video_id: this.currentVideoId };
+          return {
+            video_id: this.currentVideoId,
+            title: this.currentTitle,
+            author: this.currentArtist,
+          };
         },
         getPlayerResponse() {
-          return { videoDetails: { videoId: this.currentVideoId } };
+          return {
+            videoDetails: {
+              videoId: this.currentVideoId,
+              title: this.currentTitle,
+              author: this.currentArtist,
+            },
+          };
         },
         loadVideoById(videoId: string) {
           this.currentVideoId = videoId;
+          this.currentTitle = "Verified Party Song";
+          this.currentArtist = "Verified Party Artist";
         },
         pauseVideo() {
           return undefined;
@@ -252,6 +266,35 @@ test("loads the extension content script on YouTube Music", async () => {
     await expect(
       musicPage.locator('[data-party-navigation-marker="preserved"]'),
     ).toHaveCount(1);
+
+    await musicPage.evaluate(() => {
+      const app = document.querySelector("ytmusic-app") as HTMLElement & {
+        playerApi?: {
+          currentVideoId?: string;
+          currentTitle?: string;
+          currentArtist?: string;
+        };
+      };
+      if (app.playerApi) {
+        app.playerApi.currentVideoId = "native-auto-next";
+        app.playerApi.currentTitle = "Native Auto Next";
+        app.playerApi.currentArtist = "Native Artist";
+      }
+    });
+    const actualPlayerPlayback = await extensionPage.evaluate(async () => {
+      const [tab] = await chrome.tabs.query({
+        url: "https://music.youtube.com/*",
+      });
+      if (!tab?.id) throw new Error("YouTube Music tab was not found.");
+      return chrome.tabs.sendMessage(tab.id, {
+        type: "content.getPlayback",
+      });
+    });
+
+    expect(actualPlayerPlayback.data.track.videoId).toBe("native-auto-next");
+    expect(actualPlayerPlayback.data.track.title).toBe("Native Auto Next");
+    expect(actualPlayerPlayback.data.track.artist).toBe("Native Artist");
+    await expect(musicPage).toHaveURL(/watch\?v=party-spa-navigation/);
   } finally {
     await context.close();
   }

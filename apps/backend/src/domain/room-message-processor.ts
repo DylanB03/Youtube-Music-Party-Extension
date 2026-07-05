@@ -89,6 +89,10 @@ export async function processRoomMessage({
 
   const eventTimeMs = now();
   if (message.type === "participant.status") {
+    // Presence updates broadcast a fresh snapshot but intentionally do NOT
+    // increment the room revision. The revision drives optimistic-concurrency
+    // checks for queue/playback/permission mutations, and a guest's sync status
+    // flapping must never invalidate another participant's in-flight action.
     const result = applyRoomMutation(
       room,
       message,
@@ -99,7 +103,6 @@ export async function processRoomMessage({
     );
     if (result.changed) {
       room.lastActivityAtMs = eventTimeMs;
-      room.revision += 1;
       await persist();
       broadcast();
     }

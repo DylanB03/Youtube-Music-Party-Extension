@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { isServerMessage, isTrack, trackFieldLimits } from "./protocol";
+import {
+  isClientMessage,
+  isServerMessage,
+  isSyncStatus,
+  isTrack,
+  trackFieldLimits,
+} from "./protocol";
 
 describe("protocol limits", () => {
   it("accepts bounded track metadata", () => {
@@ -26,6 +32,51 @@ describe("protocol limits", () => {
       }),
     ).toBe(false);
     expect(isTrack({ videoId: "track", durationSeconds: -1 })).toBe(false);
+  });
+});
+
+describe("sync status validation", () => {
+  it("accepts the ready_to_resume status", () => {
+    expect(isSyncStatus("ready_to_resume")).toBe(true);
+  });
+
+  it("rejects unknown sync statuses", () => {
+    expect(isSyncStatus("paused")).toBe(false);
+    expect(isSyncStatus(undefined)).toBe(false);
+  });
+});
+
+describe("client message validation", () => {
+  it("accepts a host requeue mutation", () => {
+    expect(
+      isClientMessage({
+        type: "playback.host_requeue",
+        operationId: "op-1",
+        track: { videoId: "current", title: "Correct Song" },
+        expectedRevision: 4,
+      }),
+    ).toBe(true);
+  });
+
+  it("rejects invalid host requeue metadata", () => {
+    expect(
+      isClientMessage({
+        type: "playback.host_requeue",
+        operationId: "op-1",
+        track: { videoId: "" },
+        expectedRevision: 4,
+      }),
+    ).toBe(false);
+  });
+
+  it("rejects a host requeue mutation with an invalid revision", () => {
+    expect(
+      isClientMessage({
+        type: "playback.host_requeue",
+        operationId: "op-1",
+        expectedRevision: 0,
+      }),
+    ).toBe(false);
   });
 });
 

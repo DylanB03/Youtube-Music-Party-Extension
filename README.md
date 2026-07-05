@@ -49,4 +49,6 @@ npm run test:browser
 The browser command builds the extension, starts an isolated local Wrangler backend, runs two-client room flows, validates selector fixtures on the YouTube Music origin, and checks extension loading.
 Browser tests use `http://127.0.0.1:8797` so they do not reuse or disturb the normal development backend.
 
-The extension defaults to `http://localhost:8787` for the backend. Override with `WXT_PUBLIC_PARTY_API_BASE_URL` if needed.
+The extension defaults to `http://localhost:8787` for the backend. Override with `WXT_PUBLIC_PARTY_API_BASE_URL` if needed; this same value is resolved at build time to scope the manifest's `host_permissions` to that single backend origin (plus `music.youtube.com`), so set it for production builds.
+
+The backend expects two KV namespaces: `INVITES` (invite-code mappings) and `RATE_LIMITS` (fixed-window request counters). Replace the placeholder ids in `apps/backend/wrangler.toml` with provisioned namespace ids before deploying.

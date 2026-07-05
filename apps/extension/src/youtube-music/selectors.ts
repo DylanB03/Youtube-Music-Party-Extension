@@ -1,4 +1,5 @@
 import type { LocalPlaybackState, Track } from "@ytm-party/shared";
+import { sanitizeTrackTitle } from "./player-metadata";
 
 const SONG_ROW_SELECTOR = [
   "ytmusic-responsive-list-item-renderer",
@@ -34,14 +35,19 @@ export function findMediaElement(): HTMLMediaElement | null {
   return document.querySelector("video");
 }
 
-export function readCurrentTrack(): Track | null {
-  const videoId = new URL(location.href).searchParams.get("v");
+export function readCurrentTrack(playerTrack?: Track | null): Track | null {
+  const videoId =
+    playerTrack?.videoId ?? new URL(location.href).searchParams.get("v");
   if (!videoId) return null;
 
   const title =
-    document.querySelector<HTMLElement>("ytmusic-player-bar .title")?.innerText.trim() ||
-    document.title.replace(" - YouTube Music", "").trim();
+    sanitizeTrackTitle(playerTrack?.title) ??
+    sanitizeTrackTitle(
+      document.querySelector<HTMLElement>("ytmusic-player-bar .title")?.innerText,
+    ) ??
+    sanitizeTrackTitle(document.title);
   const artist =
+    playerTrack?.artist?.trim() ||
     document.querySelector<HTMLElement>("ytmusic-player-bar .subtitle")?.innerText.trim() ||
     undefined;
 
@@ -52,10 +58,10 @@ export function readCurrentTrack(): Track | null {
   };
 }
 
-export function readPlaybackState(): LocalPlaybackState {
+export function readPlaybackState(playerTrack?: Track | null): LocalPlaybackState {
   const media = findMediaElement();
   return {
-    track: readCurrentTrack(),
+    track: readCurrentTrack(playerTrack),
     paused: media?.paused ?? true,
     positionSeconds: media?.currentTime ?? 0,
     durationSeconds: Number.isFinite(media?.duration) ? media?.duration : undefined,

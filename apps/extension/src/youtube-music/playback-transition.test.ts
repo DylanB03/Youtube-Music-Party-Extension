@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { LocalPlaybackState } from "@ytm-party/shared";
-import { PlaybackTransitionDetector } from "./playback-transition";
+import { PlaybackTransitionDetector, looksLikeNaturalTrackAdvance } from "./playback-transition";
 
 function playback(
   videoId: string,
@@ -22,6 +22,39 @@ describe("YouTube Music playback transitions", () => {
     detector.observe(playback("current", 178));
 
     expect(detector.observe(playback("youtube-next", 0))).toBe("ended");
+  });
+
+  it("does not guess that a track ended from elapsed time alone", () => {
+    const detector = new PlaybackTransitionDetector();
+    detector.observe({
+      track: { videoId: "current" },
+      paused: false,
+      positionSeconds: 178,
+      buffering: false,
+    });
+
+    expect(
+      detector.observe({
+        track: { videoId: "youtube-next" },
+        paused: false,
+        positionSeconds: 0,
+        buffering: false,
+      }),
+    ).toBe("track_changed");
+  });
+
+  it("requires duration evidence before inferring a natural end", () => {
+    expect(
+      looksLikeNaturalTrackAdvance(
+        {
+          track: { videoId: "short" },
+          paused: false,
+          positionSeconds: 18,
+          buffering: false,
+        },
+        18,
+      ),
+    ).toBe(false);
   });
 
   it("treats an early track swap as a user track change", () => {

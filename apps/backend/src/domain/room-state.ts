@@ -63,6 +63,41 @@ export function applyRoomMutation(
       return { changed: true };
     }
 
+    case "playback.host_requeue": {
+      const hostError = validateHost(state, participantId);
+      if (hostError) return { changed: false, error: hostError };
+      if (state.playback.track) {
+        const observedTrack =
+          message.track?.videoId === state.playback.track.videoId
+            ? message.track
+            : null;
+        const requeuedTrack = observedTrack
+          ? {
+              ...state.playback.track,
+              title: observedTrack.title ?? state.playback.track.title,
+              artist: observedTrack.artist ?? state.playback.track.artist,
+            }
+          : state.playback.track;
+        // Restore the currently-playing track to the front of the queue so the
+        // host can later "resume" into it. This intentionally bypasses
+        // maxQueueItems because it is recovering an already-active track rather
+        // than queuing a brand new one.
+        state.queue.unshift({
+          id: createQueueId(),
+          track: requeuedTrack,
+          addedByParticipantId: participantId,
+          addedAtMs: nowMs,
+        });
+      }
+      state.playback = {
+        track: null,
+        paused: true,
+        positionSeconds: 0,
+        effectiveAtMs: nowMs,
+      };
+      return { changed: true };
+    }
+
     case "playback.skip": {
       if (!canSkip(state, participantId)) {
         return {

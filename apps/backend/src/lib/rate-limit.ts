@@ -16,8 +16,8 @@ export async function enforceRateLimit(
     request.headers.get("X-Forwarded-For")?.split(",")[0]?.trim() ??
     "local";
   const windowId = Math.floor(Date.now() / (options.windowSeconds * 1000));
-  const key = `rate:${options.scope}:${clientAddress}:${windowId}`;
-  const current = Number((await env.INVITES.get(key)) ?? "0");
+  const key = `${options.scope}:${clientAddress}:${windowId}`;
+  const current = Number((await env.RATE_LIMITS.get(key)) ?? "0");
 
   if (current >= options.limit) {
     return new Response(
@@ -34,7 +34,7 @@ export async function enforceRateLimit(
     );
   }
 
-  await env.INVITES.put(key, String(current + 1), {
+  await env.RATE_LIMITS.put(key, String(current + 1), {
     expirationTtl: options.windowSeconds * 2,
   });
   return null;

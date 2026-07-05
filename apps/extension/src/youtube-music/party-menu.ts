@@ -172,6 +172,13 @@ function ensurePartyAction(
   track: Track,
   selectionStore: TrackSelectionStore,
 ): void {
+  const otherActions = menu.ownerDocument.querySelectorAll<HTMLElement>(
+    `[${ACTION_ATTRIBUTE}]`,
+  );
+  for (const action of otherActions) {
+    if (!menu.contains(action)) action.remove();
+  }
+
   const existing = menu.querySelector<HTMLElement>(`[${ACTION_ATTRIBUTE}]`);
   if (existing?.dataset.ytmPartyTrackId === track.videoId) return;
   existing?.remove();

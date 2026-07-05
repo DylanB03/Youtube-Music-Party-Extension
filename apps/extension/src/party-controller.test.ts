@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type {
   ClientMessage,
   LocalPlaybackState,
@@ -19,6 +19,8 @@ import type {
 class FakeConnection implements PartyConnection {
   clockOffsetMs = 0;
   sent: ClientMessage[] = [];
+  snapshotOnSkip: PartyRoomState | null = null;
+  snapshotOnHostRequeue: PartyRoomState | null = null;
   private snapshotListener: ((state: PartyRoomState) => void) | null = null;
   private connectionStateListener: ((state: ConnectionState) => void) | null = null;
 
@@ -51,6 +53,15 @@ class FakeConnection implements PartyConnection {
 
   async sendOperation(message: MutationMessage): Promise<OperationResult> {
     this.sent.push(message);
+    // Mirror the backend, which broadcasts the new snapshot before the
+    // operation result so the client has fresh canonical state when the
+    // mutation promise resolves.
+    if (message.type === "playback.skip" && this.snapshotOnSkip) {
+      this.snapshotListener?.(this.snapshotOnSkip);
+    }
+    if (message.type === "playback.host_requeue" && this.snapshotOnHostRequeue) {
+      this.snapshotListener?.(this.snapshotOnHostRequeue);
+    }
     return {
       type: "operation.result",
       operationId: message.operationId,
@@ -91,6 +102,9 @@ class FakeStorage {
 class FakeTabs {
   applied: PartyPlaybackState[] = [];
   failApply = false;
+  failAfterApply = false;
+  applicationResult: "applied" | "navigating" = "applied";
+  activePartyTabId: number | null = null;
   playback: LocalPlaybackState = {
     track: { videoId: "old-track" },
     paused: true,
@@ -102,20 +116,29 @@ class FakeTabs {
     return this.playback;
   }
 
-  async applyPlayback(playback: PartyPlaybackState): Promise<"applied"> {
+  async applyPlayback(
+    playback: PartyPlaybackState,
+  ): Promise<"applied" | "navigating"> {
     if (this.failApply) throw new Error("Tab stalled");
     this.applied.push(playback);
-    this.playback = {
-      track: playback.track,
-      paused: playback.paused,
-      positionSeconds: playback.positionSeconds,
-      buffering: false,
-    };
-    return "applied";
+    if (this.applicationResult === "applied") {
+      this.playback = {
+        track: playback.track,
+        paused: playback.paused,
+        positionSeconds: playback.positionSeconds,
+        buffering: false,
+      };
+    }
+    if (this.failAfterApply) throw new Error("Tab reported a late failure");
+    return this.applicationResult;
   }
 
   async getContextSong(): Promise<Track | null> {
     return null;
+  }
+
+  async resolveActivePartyTabId(): Promise<number | null> {
+    return this.activePartyTabId;
   }
 }
 
@@ -274,7 +297,7 @@ describe("party controller orchestration", () => {
     ).toHaveLength(1);
   });
 
-  it("keeps the solo host in sync when YouTube Music stalls during canonical apply", async () => {
+  it("marks the host unavailable when canonical playback cannot be verified", async () => {
     const { controller, connection, tabs } = await createHostController();
     tabs.failApply = true;
     connection.sent = [];
@@ -291,9 +314,7 @@ describe("party controller orchestration", () => {
     await flushControllerWork();
 
     expect(controller.getView()).toMatchObject({
-      localSyncStatus: "in_sync",
-      lastError:
-        "YouTube Music has not loaded the party track yet. Keeping host playback active.",
+      localSyncStatus: "track_unavailable",
     });
     expect(
       connection.sent.filter(
@@ -301,7 +322,7 @@ describe("party controller orchestration", () => {
           message.type === "participant.status" &&
           message.syncStatus === "track_unavailable",
       ),
-    ).toEqual([]);
+    ).toHaveLength(1);
   });
 
   it("ignores YouTube Music auto-next host events while party auto-advance is pending", async () => {
@@ -449,6 +470,735 @@ describe("party controller orchestration", () => {
     await Promise.resolve();
 
     expect(tabs.applied.at(-1)?.track?.videoId).toBe("next-track");
+  });
+
+  it("ignores playback events from tabs other than the bound party tab", async () => {
+    const connection = new FakeConnection();
+    const tabs = new FakeTabs();
+    tabs.activePartyTabId = 7;
+    const controller = new PartyController(
+      {
+        async createRoom() {
+          return {
+            roomId: "room",
+            inviteCode: "ABC123",
+            inviteUrl: "https://party.example/join/ABC123",
+            participantId: "host",
+            participantToken: "token",
+          };
+        },
+        async joinRoom() {
+          throw new Error("Not used");
+        },
+      },
+      new FakeStorage(null),
+      tabs,
+      () => connection,
+      () => undefined,
+    );
+
+    await controller.createParty("Host");
+    connection.emitSnapshot(roomState());
+    await flushControllerWork();
+    connection.sent = [];
+
+    const pauseEvent = {
+      type: "local.pause" as const,
+      playback: {
+        track: { videoId: "current-track" },
+        paused: true,
+        positionSeconds: 5,
+        buffering: false,
+      },
+    };
+
+    await controller.handleLocalPlaybackEvent(pauseEvent, 99);
+    expect(
+      connection.sent.filter((message) => message.type === "playback.host_state"),
+    ).toHaveLength(0);
+
+    await controller.handleLocalPlaybackEvent(pauseEvent, 7);
+    expect(
+      connection.sent.filter((message) => message.type === "playback.host_state"),
+    ).toHaveLength(1);
+  });
+
+  it("auto-advances when a near-end track change is misclassified", async () => {
+    const { controller, connection } = await createHostController();
+    connection.sent = [];
+
+    await controller.handleLocalPlaybackEvent({
+      type: "local.progress",
+      playback: {
+        track: { videoId: "current-track" },
+        paused: false,
+        positionSeconds: 178,
+        durationSeconds: 180,
+        buffering: false,
+      },
+    });
+    connection.sent = [];
+
+    await controller.handleLocalPlaybackEvent({
+      type: "local.track_changed",
+      playback: {
+        track: { videoId: "youtube-auto-next" },
+        paused: false,
+        positionSeconds: 0,
+        buffering: false,
+      },
+    });
+
+    expect(
+      connection.sent.filter((message) => message.type === "playback.skip"),
+    ).toHaveLength(1);
+    expect(
+      connection.sent.filter((message) => message.type === "playback.host_requeue"),
+    ).toHaveLength(0);
+  });
+
+  it("applies queue additions while awaiting resume", async () => {
+    vi.useFakeTimers();
+    try {
+      const { controller, connection, tabs } = await createHostController();
+      connection.sent = [];
+
+      await controller.handleLocalPlaybackEvent({
+        type: "local.progress",
+        playback: {
+          track: { videoId: "current-track" },
+          paused: false,
+          positionSeconds: 40,
+          durationSeconds: 180,
+          buffering: false,
+        },
+      });
+      connection.sent = [];
+
+      await controller.handleLocalPlaybackEvent({
+        type: "local.track_changed",
+        playback: {
+          track: { videoId: "clicked-song" },
+          paused: false,
+          positionSeconds: 0,
+          buffering: false,
+        },
+      });
+
+      await vi.advanceTimersByTimeAsync(1_500);
+      await flushControllerWork();
+
+      const requeued = roomState();
+      requeued.revision = 3;
+      requeued.queue = [
+        {
+          id: "requeued",
+          track: { videoId: "current-track" },
+          addedByParticipantId: "host",
+          addedAtMs: Date.now(),
+        },
+      ];
+      requeued.playback = {
+        track: null,
+        paused: true,
+        positionSeconds: 0,
+        effectiveAtMs: Date.now(),
+      };
+      connection.emitSnapshot(requeued);
+      await flushControllerWork();
+      expect(controller.getView().localSyncStatus).toBe("ready_to_resume");
+
+      const added = roomState();
+      added.revision = 4;
+      added.queue = [];
+      added.playback = {
+        track: { videoId: "queued-new" },
+        paused: false,
+        positionSeconds: 0,
+        effectiveAtMs: Date.now(),
+      };
+      tabs.applied = [];
+      connection.emitSnapshot(added);
+      await flushControllerWork();
+
+      expect(tabs.applied.at(-1)?.track?.videoId).toBe("queued-new");
+      expect(controller.getView().localSyncStatus).toBe("in_sync");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("requeues the party track after a deferred mid-song manual change", async () => {
+    vi.useFakeTimers();
+    try {
+      const { controller, connection } = await createHostController();
+      connection.sent = [];
+
+      await controller.handleLocalPlaybackEvent({
+        type: "local.progress",
+        playback: {
+          track: { videoId: "current-track" },
+          paused: false,
+          positionSeconds: 40,
+          durationSeconds: 180,
+          buffering: false,
+        },
+      });
+      connection.sent = [];
+
+      await controller.handleLocalPlaybackEvent({
+        type: "local.track_changed",
+        playback: {
+          track: { videoId: "clicked-song" },
+          paused: false,
+          positionSeconds: 0,
+          buffering: false,
+        },
+      });
+
+      expect(connection.sent).toEqual([]);
+
+      await vi.advanceTimersByTimeAsync(1_500);
+      await flushControllerWork();
+
+      expect(
+        connection.sent.filter((message) => message.type === "playback.host_requeue"),
+      ).toHaveLength(1);
+      expect(controller.getView().localSyncStatus).toBe("ready_to_resume");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("cancels a deferred requeue when the track ends naturally", async () => {
+    vi.useFakeTimers();
+    try {
+      const { controller, connection } = await createHostController();
+      connection.sent = [];
+
+      await controller.handleLocalPlaybackEvent({
+        type: "local.progress",
+        playback: {
+          track: { videoId: "current-track" },
+          paused: false,
+          positionSeconds: 40,
+          durationSeconds: 180,
+          buffering: false,
+        },
+      });
+      connection.sent = [];
+
+      await controller.handleLocalPlaybackEvent({
+        type: "local.track_changed",
+        playback: {
+          track: { videoId: "youtube-auto-next" },
+          paused: false,
+          positionSeconds: 0,
+          buffering: false,
+        },
+      });
+      connection.sent = [];
+
+      await controller.handleLocalPlaybackEvent({
+        type: "local.ended",
+        playback: {
+          track: { videoId: "current-track" },
+          paused: true,
+          positionSeconds: 180,
+          durationSeconds: 180,
+          buffering: false,
+        },
+      });
+
+      await vi.advanceTimersByTimeAsync(1_500);
+      await flushControllerWork();
+
+      expect(
+        connection.sent.filter((message) => message.type === "playback.host_requeue"),
+      ).toHaveLength(0);
+      expect(
+        connection.sent.filter((message) => message.type === "playback.skip"),
+      ).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not requeue or push host state for a divergent play before track end", async () => {
+    const { controller, connection } = await createHostController();
+    connection.sent = [];
+
+    // YouTube Music fires play for its own auto-next song as the current track
+    // ends, before the adapter emits local.ended/track_changed. This must not
+    // overwrite the party song nor trigger a requeue.
+    await controller.handleLocalPlaybackEvent({
+      type: "local.play",
+      playback: {
+        track: { videoId: "youtube-auto-next" },
+        paused: false,
+        positionSeconds: 0,
+        buffering: false,
+      },
+    });
+
+    expect(connection.sent).toEqual([]);
+    expect(controller.getView().localSyncStatus).toBe("in_sync");
+  });
+
+  it("auto-advances when native-next play arrives before track_changed", async () => {
+    const { controller, connection } = await createHostController();
+    connection.sent = [];
+
+    await controller.handleLocalPlaybackEvent({
+      type: "local.progress",
+      playback: {
+        track: { videoId: "current-track" },
+        paused: false,
+        positionSeconds: 178,
+        durationSeconds: 180,
+        buffering: false,
+      },
+    });
+    connection.sent = [];
+
+    await controller.handleLocalPlaybackEvent({
+      type: "local.play",
+      playback: {
+        track: { videoId: "youtube-auto-next" },
+        paused: false,
+        positionSeconds: 0,
+        buffering: false,
+      },
+    });
+    await controller.handleLocalPlaybackEvent({
+      type: "local.track_changed",
+      playback: {
+        track: { videoId: "youtube-auto-next" },
+        paused: false,
+        positionSeconds: 0,
+        buffering: false,
+      },
+    });
+
+    expect(
+      connection.sent.filter((message) => message.type === "playback.skip"),
+    ).toHaveLength(1);
+    expect(
+      connection.sent.filter((message) => message.type === "playback.host_requeue"),
+    ).toHaveLength(0);
+  });
+
+  it("auto-advances after a fast seek directly to the end", async () => {
+    const { controller, connection } = await createHostController();
+    connection.sent = [];
+
+    await controller.handleLocalPlaybackEvent({
+      type: "local.seek",
+      playback: {
+        track: { videoId: "current-track" },
+        paused: false,
+        positionSeconds: 179.5,
+        durationSeconds: 180,
+        buffering: false,
+      },
+    });
+    connection.sent = [];
+
+    await controller.handleLocalPlaybackEvent({
+      type: "local.play",
+      playback: {
+        track: { videoId: "youtube-auto-next" },
+        paused: false,
+        positionSeconds: 0,
+        buffering: false,
+      },
+    });
+
+    expect(
+      connection.sent.filter((message) => message.type === "playback.skip"),
+    ).toHaveLength(1);
+    expect(
+      connection.sent.filter((message) => message.type === "playback.host_requeue"),
+    ).toHaveLength(0);
+  });
+
+  it("forces queue advancement when recurring progress reports the wrong song", async () => {
+    const { controller, connection } = await createHostController();
+    connection.sent = [];
+
+    await controller.handleLocalPlaybackEvent({
+      type: "local.progress",
+      playback: {
+        track: { videoId: "youtube-auto-next" },
+        paused: false,
+        positionSeconds: 2,
+        buffering: false,
+      },
+    });
+
+    expect(
+      connection.sent.filter((message) => message.type === "playback.skip"),
+    ).toHaveLength(1);
+    expect(controller.getView().localSyncStatus).toBe("in_sync");
+  });
+
+  it("auto-advances the queue when the current track ends", async () => {
+    const { controller, connection } = await createHostController();
+    connection.sent = [];
+
+    await controller.handleLocalPlaybackEvent({
+      type: "local.ended",
+      playback: {
+        track: { videoId: "current-track" },
+        paused: true,
+        positionSeconds: 180,
+        durationSeconds: 180,
+        buffering: false,
+      },
+    });
+
+    expect(
+      connection.sent.filter((message) => message.type === "playback.skip"),
+    ).toHaveLength(1);
+    expect(
+      connection.sent.filter((message) => message.type === "playback.host_requeue"),
+    ).toHaveLength(0);
+  });
+
+  it("keeps host playback local-only while awaiting resume", async () => {
+    const { controller, connection } = await createHostController();
+    connection.sent = [];
+
+    await controller.handleLocalPlaybackEvent({
+      type: "local.track_changed",
+      playback: {
+        track: { videoId: "clicked-song" },
+        paused: false,
+        positionSeconds: 0,
+        buffering: false,
+      },
+    });
+    connection.sent = [];
+
+    await controller.handleLocalPlaybackEvent({
+      type: "local.progress",
+      playback: {
+        track: { videoId: "clicked-song" },
+        paused: false,
+        positionSeconds: 5,
+        buffering: false,
+      },
+    });
+    await controller.handleLocalPlaybackEvent({
+      type: "local.play",
+      playback: {
+        track: { videoId: "clicked-song" },
+        paused: false,
+        positionSeconds: 6,
+        buffering: false,
+      },
+    });
+
+    expect(connection.sent).toEqual([]);
+  });
+
+  it("confirms Resume playback and advances its next natural end", async () => {
+    vi.useFakeTimers();
+    try {
+      const { controller, connection, tabs } = await createHostController();
+      await controller.handleLocalPlaybackEvent({
+        type: "local.progress",
+        playback: {
+          track: {
+            videoId: "current-track",
+            title: "Correct Song",
+            artist: "Correct Artist",
+          },
+          paused: false,
+          positionSeconds: 20,
+          buffering: false,
+        },
+      });
+      const requeued = roomState();
+      requeued.revision = 3;
+      requeued.queue = [
+        {
+          id: "requeued",
+          track: {
+            videoId: "current-track",
+            title: "Correct Song",
+            artist: "Correct Artist",
+          },
+          addedByParticipantId: "host",
+          addedAtMs: Date.now(),
+        },
+        {
+          id: "next",
+          track: { videoId: "queued-next" },
+          addedByParticipantId: "host",
+          addedAtMs: Date.now(),
+        },
+      ];
+      requeued.playback = {
+        track: null,
+        paused: true,
+        positionSeconds: 0,
+        effectiveAtMs: Date.now(),
+      };
+      connection.snapshotOnHostRequeue = requeued;
+      connection.sent = [];
+      tabs.playback = {
+        track: { videoId: "clicked-song" },
+        paused: false,
+        positionSeconds: 0,
+        buffering: false,
+      };
+
+      await controller.handleLocalPlaybackEvent({
+        type: "local.track_changed",
+        playback: tabs.playback,
+      });
+      await vi.advanceTimersByTimeAsync(1_500);
+      await flushControllerWork();
+
+      expect(controller.getView().localSyncStatus).toBe("ready_to_resume");
+      expect(tabs.playback.track?.videoId).toBe("clicked-song");
+      expect(connection.sent).toContainEqual(
+        expect.objectContaining({
+          type: "playback.host_requeue",
+          track: {
+            videoId: "current-track",
+            title: "Correct Song",
+            artist: "Correct Artist",
+          },
+        }),
+      );
+
+      const resumed = roomState();
+      resumed.revision = 4;
+      resumed.queue = [requeued.queue[1]!];
+      resumed.playback = {
+        track: { videoId: "current-track" },
+        paused: false,
+        positionSeconds: 0,
+        effectiveAtMs: Date.now(),
+      };
+      connection.snapshotOnSkip = resumed;
+      connection.sent = [];
+      tabs.failAfterApply = true;
+
+      await controller.resumePlayback();
+      await flushControllerWork();
+
+      expect(controller.getView().localSyncStatus).toBe("in_sync");
+      expect(tabs.playback.track?.videoId).toBe("current-track");
+      expect(
+        connection.sent.filter(
+          (message) =>
+            message.type === "participant.status" &&
+            message.syncStatus === "in_sync",
+        ),
+      ).toHaveLength(1);
+
+      const afterEnd = roomState();
+      afterEnd.revision = 5;
+      afterEnd.queue = [];
+      afterEnd.playback = {
+        track: { videoId: "queued-next" },
+        paused: false,
+        positionSeconds: 0,
+        effectiveAtMs: Date.now(),
+      };
+      connection.snapshotOnSkip = afterEnd;
+      connection.sent = [];
+
+      await controller.handleLocalPlaybackEvent({
+        type: "local.ended",
+        playback: {
+          track: { videoId: "current-track" },
+          paused: true,
+          positionSeconds: 180,
+          durationSeconds: 180,
+          buffering: false,
+        },
+      });
+      await flushControllerWork();
+
+      expect(
+        connection.sent.filter((message) => message.type === "playback.skip"),
+      ).toHaveLength(1);
+      expect(tabs.playback.track?.videoId).toBe("queued-next");
+      expect(controller.getView().localSyncStatus).toBe("in_sync");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("ignores late snapshots and expiration events from a replaced party", async () => {
+    const oldConnection = new FakeConnection();
+    const newConnection = new FakeConnection();
+    const tabs = new FakeTabs();
+    const storage = new FakeStorage({
+      roomId: "old-room",
+      participantId: "old-host",
+      participantToken: "old-token",
+      displayName: "Old Host",
+      localSyncStatus: "in_sync",
+    });
+    const controller = new PartyController(
+      {
+        async createRoom() {
+          return {
+            roomId: "new-room",
+            inviteCode: "NEW123",
+            inviteUrl: "https://party.example/join/NEW123",
+            participantId: "new-host",
+            participantToken: "new-token",
+          };
+        },
+        async joinRoom() {
+          throw new Error("Not used");
+        },
+      },
+      storage,
+      tabs,
+      (credentials) =>
+        credentials.roomId === "old-room" ? oldConnection : newConnection,
+      () => undefined,
+    );
+
+    await controller.initialize();
+    const oldState = roomState();
+    oldState.roomId = "old-room";
+    oldState.hostParticipantId = "old-host";
+    oldConnection.emitSnapshot(oldState);
+    await flushControllerWork();
+
+    await controller.createParty("New Host");
+    const newState = roomState();
+    newState.roomId = "new-room";
+    newState.hostParticipantId = "new-host";
+    newState.playback.track = { videoId: "new-party-track" };
+    newConnection.emitSnapshot(newState);
+    await flushControllerWork();
+
+    const staleState = roomState();
+    staleState.roomId = "old-room";
+    staleState.hostParticipantId = "old-host";
+    staleState.playback.track = { videoId: "stale-old-track" };
+    oldConnection.emitSnapshot(staleState);
+    oldConnection.emitConnectionState("expired");
+    await flushControllerWork();
+
+    expect(controller.getView().roomId).toBe("new-room");
+    expect(controller.getView().state?.roomId).toBe("new-room");
+    expect(storage.saved?.roomId).toBe("new-room");
+    expect(tabs.applied.at(-1)?.track?.videoId).not.toBe("stale-old-track");
+  });
+
+  it("accepts a host-selected song when the new party has no current track", async () => {
+    const { controller, connection } = await createHostController();
+    const empty = roomState();
+    empty.revision = 3;
+    empty.playback = {
+      track: null,
+      paused: true,
+      positionSeconds: 0,
+      effectiveAtMs: Date.now(),
+    };
+    connection.emitSnapshot(empty);
+    await flushControllerWork();
+    connection.sent = [];
+
+    await controller.handleLocalPlaybackEvent({
+      type: "local.track_changed",
+      playback: {
+        track: { videoId: "host-selected" },
+        paused: false,
+        positionSeconds: 0,
+        buffering: false,
+      },
+    });
+
+    expect(
+      connection.sent.filter((message) => message.type === "playback.host_state"),
+    ).toHaveLength(1);
+    expect(connection.sent).toContainEqual(
+      expect.objectContaining({
+        type: "playback.host_state",
+        playback: expect.objectContaining({
+          track: { videoId: "host-selected" },
+        }),
+      }),
+    );
+  });
+
+  it("suppresses duplicate native events until the queued track finishes applying", async () => {
+    const { controller, connection, tabs } = await createHostController();
+    const advanced = roomState();
+    advanced.revision = 3;
+    advanced.playback = {
+      track: { videoId: "queued-next" },
+      paused: false,
+      positionSeconds: 0,
+      effectiveAtMs: Date.now(),
+    };
+    connection.snapshotOnSkip = advanced;
+    connection.sent = [];
+    tabs.applicationResult = "navigating";
+
+    await controller.handleLocalPlaybackEvent({
+      type: "local.ended",
+      playback: {
+        track: { videoId: "current-track" },
+        paused: true,
+        positionSeconds: 180,
+        durationSeconds: 180,
+        buffering: false,
+      },
+    });
+    await flushControllerWork();
+
+    await controller.handleLocalPlaybackEvent({
+      type: "local.progress",
+      playback: {
+        track: { videoId: "youtube-native-next" },
+        paused: false,
+        positionSeconds: 2,
+        buffering: false,
+      },
+    });
+    await controller.handleLocalPlaybackEvent({
+      type: "local.ended",
+      playback: {
+        track: { videoId: "youtube-native-next" },
+        paused: true,
+        positionSeconds: 3,
+        durationSeconds: 3,
+        buffering: false,
+      },
+    });
+
+    expect(
+      connection.sent.filter((message) => message.type === "playback.skip"),
+    ).toHaveLength(1);
+
+    tabs.applicationResult = "applied";
+    await controller.handleContentReady();
+    await controller.handleLocalPlaybackEvent({
+      type: "local.pause",
+      playback: {
+        track: { videoId: "queued-next" },
+        paused: true,
+        positionSeconds: 4,
+        buffering: false,
+      },
+    });
+
+    expect(controller.getView().localSyncStatus).toBe("in_sync");
+    expect(
+      connection.sent.filter((message) => message.type === "playback.host_state"),
+    ).toHaveLength(1);
   });
 
   it("clears an expired room instead of reconnecting forever", async () => {

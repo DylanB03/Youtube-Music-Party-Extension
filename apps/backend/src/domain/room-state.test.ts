@@ -227,6 +227,102 @@ describe("party room mutations", () => {
     });
   });
 
+  it("requeues the current host track to the front and clears playback", () => {
+    const state = createRoomState();
+    state.queue = [
+      {
+        id: "existing",
+        track: { videoId: "queued" },
+        addedByParticipantId: "guest",
+        addedAtMs: 1_500,
+      },
+    ];
+
+    const result = applyRoomMutation(
+      state,
+      {
+        type: "playback.host_requeue",
+        operationId: "host-requeue",
+        track: {
+          videoId: "playing",
+          title: "Correct Song",
+          artist: "Correct Artist",
+        },
+        expectedRevision: 4,
+      },
+      "host",
+      2_000,
+      () => "requeued-id",
+    );
+
+    expect(result.changed).toBe(true);
+    expect(result.error).toBeUndefined();
+    expect(state.queue.map((item) => item.id)).toEqual(["requeued-id", "existing"]);
+    expect(state.queue[0]?.track.videoId).toBe("playing");
+    expect(state.queue[0]?.track).toEqual({
+      videoId: "playing",
+      title: "Correct Song",
+      artist: "Correct Artist",
+    });
+    expect(state.playback).toEqual({
+      track: null,
+      paused: true,
+      positionSeconds: 0,
+      effectiveAtMs: 2_000,
+    });
+  });
+
+  it("rejects a non-host requeue", () => {
+    const state = createRoomState();
+
+    const result = applyRoomMutation(
+      state,
+      {
+        type: "playback.host_requeue",
+        operationId: "guest-requeue",
+        expectedRevision: 4,
+      },
+      "guest",
+      2_000,
+      () => "unused",
+    );
+
+    expect(result.error?.code).toBe("forbidden");
+    expect(state.playback.track?.videoId).toBe("playing");
+    expect(state.queue).toHaveLength(0);
+  });
+
+  it("clears playback on requeue even when no track is playing", () => {
+    const state = createRoomState();
+    state.playback = {
+      track: null,
+      paused: true,
+      positionSeconds: 0,
+      effectiveAtMs: 1_000,
+    };
+
+    const result = applyRoomMutation(
+      state,
+      {
+        type: "playback.host_requeue",
+        operationId: "empty-requeue",
+        expectedRevision: 4,
+      },
+      "host",
+      2_000,
+      () => "unused",
+    );
+
+    expect(result.changed).toBe(true);
+    expect(state.queue).toHaveLength(0);
+    expect(state.playback).toEqual({
+      track: null,
+      paused: true,
+      positionSeconds: 0,
+      effectiveAtMs: 2_000,
+    });
+  });
+
   it("rejects stale queue mutations and requests a snapshot", () => {
     const state = createRoomState();
     const result = applyRoomMutation(

@@ -20,6 +20,9 @@ export function decideGuestPlaybackAction(
   if (event.playback.interruption === "unavailable") {
     return "track_unavailable";
   }
+  if (event.playback.track?.videoId !== canonical.track?.videoId) {
+    return "out_of_sync";
+  }
   if (
     event.type === "local.play" ||
     event.type === "local.pause" ||

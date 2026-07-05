@@ -3,6 +3,7 @@ export type ParticipantRole = "host" | "guest";
 export type SyncStatus =
   | "not_joined"
   | "ready_to_join"
+  | "ready_to_resume"
   | "navigating"
   | "reconnecting"
   | "in_sync"
@@ -180,6 +181,12 @@ export type ClientMessage =
       expectedRevision: number;
     }
   | {
+      type: "playback.host_requeue";
+      operationId: string;
+      track?: Track;
+      expectedRevision: number;
+    }
+  | {
       type: "queue.add";
       operationId: string;
       track: Track;
@@ -257,6 +264,9 @@ export type ExtensionRequest =
       type: "party.rejoinPlayback";
     }
   | {
+      type: "party.resumePlayback";
+    }
+  | {
       type: "party.updatePermissions";
       permissions: RoomPermissions;
     }
@@ -332,6 +342,7 @@ export function isSyncStatus(value: unknown): value is SyncStatus {
   return (
     value === "not_joined" ||
     value === "ready_to_join" ||
+    value === "ready_to_resume" ||
     value === "navigating" ||
     value === "reconnecting" ||
     value === "in_sync" ||
@@ -381,6 +392,13 @@ export function isClientMessage(value: unknown): value is ClientMessage {
 
     case "playback.skip":
       return isOperationId(message.operationId) && isRevision(message.expectedRevision);
+
+    case "playback.host_requeue":
+      return (
+        isOperationId(message.operationId) &&
+        (message.track === undefined || isTrack(message.track)) &&
+        isRevision(message.expectedRevision)
+      );
 
     case "queue.add":
       return (

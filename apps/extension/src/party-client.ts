@@ -16,6 +16,7 @@ type Listener = (state: PartyRoomState) => void;
 type ErrorListener = (message: string) => void;
 type ConnectionStateListener = (state: ConnectionState) => void;
 const OPERATION_TIMEOUT_MS = 15_000;
+const CLOCK_RESYNC_INTERVAL_MS = 5 * 60_000;
 
 export class PartyClient {
   private socket: WebSocket | null = null;
@@ -28,6 +29,7 @@ export class PartyClient {
   private intentionallyClosed = false;
   private reconnectAttempt = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private pingTimer: ReturnType<typeof setTimeout> | null = null;
   private opening = false;
   clockOffsetMs = 0;
 
@@ -84,7 +86,7 @@ export class PartyClient {
       this.resendPendingOperations();
       this.flushPendingMessages();
       this.send({ type: "room.snapshot.request" });
-      this.pingClock();
+      this.syncClockAndScheduleRefresh();
     });
     this.socket.addEventListener("message", (event) => this.handleMessage(event.data));
     this.socket.addEventListener("error", () => this.emitError("Party connection failed."));
@@ -109,6 +111,8 @@ export class PartyClient {
     this.opening = false;
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     this.reconnectTimer = null;
+    if (this.pingTimer) clearTimeout(this.pingTimer);
+    this.pingTimer = null;
     this.socket?.close();
     this.socket = null;
     this.pendingMessages = [];
@@ -181,11 +185,15 @@ export class PartyClient {
     }
   }
 
-  private pingClock(): void {
+  private syncClockAndScheduleRefresh(): void {
+    if (this.pingTimer) clearTimeout(this.pingTimer);
     this.send({ type: "clock.ping", clientSentAtMs: Date.now() });
-    setTimeout(() => {
-      if (this.socket?.readyState === WebSocket.OPEN) this.pingClock();
-    }, 15_000);
+    this.pingTimer = setTimeout(() => {
+      this.pingTimer = null;
+      if (this.socket?.readyState === WebSocket.OPEN) {
+        this.syncClockAndScheduleRefresh();
+      }
+    }, CLOCK_RESYNC_INTERVAL_MS);
   }
 
   private scheduleReconnect(): void {

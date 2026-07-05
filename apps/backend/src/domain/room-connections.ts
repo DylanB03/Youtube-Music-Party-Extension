@@ -1,55 +1,82 @@
 import type { ServerMessage } from "@ytm-party/shared";
 import type { SessionMeta } from "../types";
 
+/**
+ * Wraps the Durable Object's hibernatable WebSocket set. Connection metadata is
+ * stored on each socket via `serializeAttachment`, so it survives Durable Object
+ * hibernation and eviction without an in-memory registry. The room therefore
+ * stops billing duration while idle and rehydrates session state on wake.
+ */
 export class RoomConnections {
-  private sessions = new Map<WebSocket, SessionMeta>();
+  constructor(private readonly state: DurableObjectState) {}
 
   get size(): number {
-    const connectionCount = this.sessions.size;
-    return connectionCount;
+    return this.state.getWebSockets().length;
   }
 
-  register(socket: WebSocket, session: SessionMeta): void {
-    this.sessions.set(socket, session);
+  accept(socket: WebSocket, session: SessionMeta): void {
+    this.state.acceptWebSocket(socket, [session.participantId]);
+    socket.serializeAttachment(session);
   }
 
-  get(socket: WebSocket): SessionMeta | undefined {
-    const session = this.sessions.get(socket);
-    return session;
+  meta(socket: WebSocket): SessionMeta | null {
+    return (socket.deserializeAttachment() as SessionMeta | null) ?? null;
   }
 
-  remove(socket: WebSocket): SessionMeta | undefined {
-    const session = this.sessions.get(socket);
-    this.sessions.delete(socket);
-    return session;
-  }
-
-  hasParticipant(participantId: string): boolean {
-    for (const session of this.sessions.values()) {
-      if (session.participantId === participantId) return true;
+  rememberMeta(socket: WebSocket, session: SessionMeta): void {
+    try {
+      socket.serializeAttachment(session);
+    } catch {
+      // The socket is closing; persisted counters no longer matter.
     }
-    return false;
+  }
+
+  hasOtherParticipantSocket(participantId: string, excluding: WebSocket): boolean {
+    return this.state
+      .getWebSockets(participantId)
+      .some((socket) => socket !== excluding);
+  }
+
+  connectionCountExcluding(socket: WebSocket): number {
+    return this.state.getWebSockets().filter((candidate) => candidate !== socket)
+      .length;
   }
 
   participantIds(): Set<string> {
-    const participantIds = new Set(
-      Array.from(this.sessions.values(), (session) => session.participantId),
-    );
+    const participantIds = new Set<string>();
+    for (const socket of this.state.getWebSockets()) {
+      const meta = this.meta(socket);
+      if (meta) participantIds.add(meta.participantId);
+    }
     return participantIds;
   }
 
   send(socket: WebSocket, message: ServerMessage): void {
-    socket.send(JSON.stringify(message));
+    this.deliver(socket, JSON.stringify(message));
   }
 
   broadcast(message: ServerMessage): void {
-    for (const socket of this.sessions.keys()) {
-      this.send(socket, message);
+    const serialized = JSON.stringify(message);
+    for (const socket of this.state.getWebSockets()) {
+      this.deliver(socket, serialized);
     }
   }
 
   closeAll(code: number, reason: string): void {
-    for (const socket of this.sessions.keys()) socket.close(code, reason);
-    this.sessions.clear();
+    for (const socket of this.state.getWebSockets()) {
+      try {
+        socket.close(code, reason);
+      } catch {
+        // Already closing.
+      }
+    }
+  }
+
+  private deliver(socket: WebSocket, serialized: string): void {
+    try {
+      socket.send(serialized);
+    } catch {
+      // The socket is mid-close; the runtime will surface a close event.
+    }
   }
 }

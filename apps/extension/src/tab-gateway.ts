@@ -8,9 +8,12 @@ import type {
 import { browser } from "./browser";
 import type { PlaybackApplicationResult } from "./playback-application";
 
+const YOUTUBE_MUSIC_URL_PREFIX = "https://music.youtube.com/";
+
 export class YouTubeMusicTabGateway {
-  async getPlayback(): Promise<LocalPlaybackState> {
-    const playback = await this.sendToActiveTab<LocalPlaybackState>({
+  async getPlayback(tabId?: number): Promise<LocalPlaybackState> {
+    const targetTabId = await this.resolveTargetTabId(tabId);
+    const playback = await this.sendToTab<LocalPlaybackState>(targetTabId, {
       type: "content.getPlayback",
     });
     if (playback) return playback;
@@ -25,8 +28,10 @@ export class YouTubeMusicTabGateway {
 
   async applyPlayback(
     playback: PartyPlaybackState,
+    tabId?: number,
   ): Promise<PlaybackApplicationResult> {
-    const result = await this.sendToActiveTab<PlaybackApplicationResult>({
+    const targetTabId = await this.resolveTargetTabId(tabId);
+    const result = await this.sendToTab<PlaybackApplicationResult>(targetTabId, {
       type: "content.applyPlayback",
       playback,
     });
@@ -41,14 +46,33 @@ export class YouTubeMusicTabGateway {
   }
 
   async getDiagnostics(): Promise<Record<string, unknown> | null> {
-    return this.sendToActiveTab<Record<string, unknown>>({
+    const targetTabId = await this.resolveTargetTabId();
+    return this.sendToTab<Record<string, unknown>>(targetTabId, {
       type: "content.getDiagnostics",
     });
   }
 
-  private async sendToActiveTab<T>(request: ExtensionRequest): Promise<T | null> {
+  async resolveActivePartyTabId(): Promise<number | null> {
     const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
-    return this.sendToTab<T>(tab?.id, request);
+    if (!tab?.id) return null;
+    return tab.url?.startsWith(YOUTUBE_MUSIC_URL_PREFIX) ? tab.id : null;
+  }
+
+  private async resolveTargetTabId(preferredTabId?: number): Promise<number | undefined> {
+    if (preferredTabId != null && (await this.tabExists(preferredTabId))) {
+      return preferredTabId;
+    }
+    const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+    return tab?.id;
+  }
+
+  private async tabExists(tabId: number): Promise<boolean> {
+    try {
+      await browser.tabs.get(tabId);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   private async sendToTab<T>(

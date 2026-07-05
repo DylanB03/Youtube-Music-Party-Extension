@@ -1,3 +1,10 @@
+import type { Track } from "@ytm-party/shared";
+import {
+  resolvePagePlayerTrack,
+  type PagePlayerResponse,
+  type PagePlayerVideoData,
+} from "./player-metadata";
+
 export const PAGE_BRIDGE_REQUEST_EVENT = "ytm-party-page-command";
 export const PAGE_BRIDGE_RESPONSE_EVENT = "ytm-party-page-response";
 const REQUEST_TIMEOUT_MS = 5_000;
@@ -5,6 +12,9 @@ const REQUEST_TIMEOUT_MS = 5_000;
 type PageBridgeCommand =
   | {
       type: "getVideoId";
+    }
+  | {
+      type: "getTrack";
     }
   | {
       type: "loadVideoById";
@@ -29,6 +39,10 @@ let bridgeInstalled = false;
 
 export async function getPagePlayerVideoId(): Promise<string | null> {
   return sendPageCommand<string | null>({ type: "getVideoId" });
+}
+
+export async function getPagePlayerTrack(): Promise<Track | null> {
+  return sendPageCommand<Track | null>({ type: "getTrack" });
 }
 
 export async function loadPagePlayerVideo(videoId: string): Promise<void> {
@@ -79,28 +93,25 @@ export function installPageBridgeListener(): void {
 
   type PageApp = HTMLElement & {
     playerApi?: {
-      getVideoData?: () => { video_id?: string; videoId?: string };
-      getPlayerResponse?: () => {
-        videoDetails?: { videoId?: string; externalVideoId?: string };
-      };
+      getVideoData?: () => PagePlayerVideoData;
+      getPlayerResponse?: () => PagePlayerResponse;
       loadVideoById?: (videoId: string) => void;
       pauseVideo?: () => void;
     };
   };
 
   const getApp = (): PageApp | null => document.querySelector("ytmusic-app");
-  const getVideoId = (): string | null => {
+  const getTrack = (): Track | null => {
     const app = getApp();
     const videoData = app?.playerApi?.getVideoData?.();
     const playerResponse = app?.playerApi?.getPlayerResponse?.();
-    return (
-      videoData?.video_id ??
-      videoData?.videoId ??
-      playerResponse?.videoDetails?.videoId ??
-      playerResponse?.videoDetails?.externalVideoId ??
-      new URL(location.href).searchParams.get("v")
+    return resolvePagePlayerTrack(
+      videoData,
+      playerResponse,
+      new URL(location.href).searchParams.get("v"),
     );
   };
+  const getVideoId = (): string | null => getTrack()?.videoId ?? null;
   const setWatchUrl = (videoId: string) => {
     const url = new URL("/watch", location.origin);
     url.searchParams.set("v", videoId);
@@ -129,6 +140,11 @@ export function installPageBridgeListener(): void {
     try {
       if (command.type === "getVideoId") {
         respond(true, getVideoId());
+        return;
+      }
+
+      if (command.type === "getTrack") {
+        respond(true, getTrack());
         return;
       }
 

@@ -42,7 +42,7 @@ const DEFAULT_ROOM_MAX_AGE_MS = 24 * 60 * 60 * 1_000;
 const DEFAULT_ROOM_IDLE_TTL_MS = 60 * 60 * 1_000;
 
 export class PartyRoom {
-  private connections = new RoomConnections();
+  private readonly connections: RoomConnections;
   private roomState: PartyRoomState | null = null;
   private roomAuth: RoomAuth | null = null;
   private loaded = false;
@@ -50,7 +50,9 @@ export class PartyRoom {
   constructor(
     private readonly state: DurableObjectState,
     private readonly env: Env,
-  ) {}
+  ) {
+    this.connections = new RoomConnections(state);
+  }
 
   async fetch(request: Request): Promise<Response> {
     await this.load();
@@ -272,9 +274,8 @@ export class PartyRoom {
     const pair = new WebSocketPair();
     const client = pair[0];
     const server = pair[1];
-    server.accept();
 
-    this.connections.register(server, {
+    this.connections.accept(server, {
       participantId,
       displayName,
       messageWindowStartedAtMs: Date.now(),
@@ -290,24 +291,32 @@ export class PartyRoom {
     });
     this.broadcastSnapshot();
 
-    server.addEventListener("message", (event) => {
-      void this.handleMessage(server, event.data);
-    });
-    server.addEventListener("close", () => {
-      void this.disconnect(server);
-    });
-    server.addEventListener("error", () => {
-      void this.disconnect(server);
-    });
-
     return new Response(null, {
       status: 101,
       webSocket: client,
     });
   }
 
-  private async handleMessage(socket: WebSocket, raw: unknown): Promise<void> {
-    const session = this.connections.get(socket);
+  async webSocketMessage(socket: WebSocket, message: string | ArrayBuffer): Promise<void> {
+    await this.load();
+    await this.handleMessage(socket, message);
+  }
+
+  async webSocketClose(socket: WebSocket): Promise<void> {
+    await this.load();
+    await this.disconnect(socket);
+  }
+
+  async webSocketError(socket: WebSocket): Promise<void> {
+    await this.load();
+    await this.disconnect(socket);
+  }
+
+  private async handleMessage(
+    socket: WebSocket,
+    raw: string | ArrayBuffer,
+  ): Promise<void> {
+    const session = this.connections.meta(socket);
     const room = this.roomState;
     const auth = this.roomAuth;
     if (!session || !room || !auth) return;
@@ -323,20 +332,27 @@ export class PartyRoom {
       broadcast: () => this.broadcastSnapshot(),
       now: Date.now,
     });
+    // Persist mutated per-connection rate-limit counters so they survive
+    // Durable Object hibernation between messages.
+    this.connections.rememberMeta(socket, session);
   }
 
   private async disconnect(socket: WebSocket): Promise<void> {
-    const session = this.connections.remove(socket);
+    const session = this.connections.meta(socket);
     if (!session || !this.roomState) return;
 
-    if (this.connections.hasParticipant(session.participantId)) return;
+    if (this.connections.hasOtherParticipantSocket(session.participantId, socket)) {
+      return;
+    }
 
     const hostDisconnected = markParticipantDisconnected(
       this.roomState,
       session.participantId,
       Date.now(),
     );
-    if (this.connections.size === 0) this.roomState.lastActivityAtMs = Date.now();
+    if (this.connections.connectionCountExcluding(socket) === 0) {
+      this.roomState.lastActivityAtMs = Date.now();
+    }
     await this.commitAndBroadcast();
     await this.scheduleNextPresenceAlarm(
       hostDisconnected

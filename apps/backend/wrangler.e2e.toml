@@ -19,6 +19,11 @@ binding = "INVITES"
 id = "e2e-kv"
 preview_id = "e2e-kv"
 
+[[kv_namespaces]]
+binding = "RATE_LIMITS"
+id = "e2e-rate-limits-kv"
+preview_id = "e2e-rate-limits-kv"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["PartyRoom"]

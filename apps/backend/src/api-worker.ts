@@ -7,7 +7,7 @@ import {
   type ResolveCodeResponse,
   emptyPlayback,
 } from "@ytm-party/shared";
-import { jsonResponse, parseJson } from "./lib/http";
+import { errorResponse, jsonResponse, parseJson } from "./lib/http";
 import {
   expiredInvitePage,
   inviteLandingPage,
@@ -25,70 +25,78 @@ const DEFAULT_INVITE_TTL_SECONDS = 60 * 60 * 24;
 
 export const apiWorker = {
   async fetch(request: Request, env: Env): Promise<Response> {
-    const url = new URL(request.url);
-
-    if (request.method === "GET" && url.pathname === "/health") {
-      return jsonResponse({ ok: true });
+    try {
+      return await route(request, env);
+    } catch (error) {
+      return errorResponse(error) ?? jsonResponse({ error: "Internal error" }, { status: 500 });
     }
-
-    if (request.method === "GET" && url.pathname.startsWith("/join/")) {
-      const inviteCode = url.pathname.split("/").at(-1)?.toUpperCase();
-      if (!inviteCode) return new Response("Missing invite code", { status: 400 });
-      const roomId = await env.INVITES.get(inviteCode);
-      if (!roomId) return expiredInvitePage();
-      return inviteLandingPage(inviteCode);
-    }
-
-    if (request.method === "POST" && url.pathname === "/rooms") {
-      const limited = await enforceRateLimit(request, env, {
-        scope: "create-room",
-        limit: 10,
-        windowSeconds: 60,
-      });
-      if (limited) return limited;
-      return createRoom(request, env);
-    }
-
-    if (request.method === "POST" && url.pathname === "/rooms/join") {
-      const limited = await enforceRateLimit(request, env, {
-        scope: "join-room",
-        limit: 30,
-        windowSeconds: 60,
-      });
-      if (limited) return limited;
-      return joinRoom(request, env);
-    }
-
-    if (request.method === "GET" && url.pathname.startsWith("/rooms/resolve/")) {
-      const limited = await enforceRateLimit(request, env, {
-        scope: "resolve-room",
-        limit: 60,
-        windowSeconds: 60,
-      });
-      if (limited) return limited;
-      return resolveInviteCode(url, env);
-    }
-
-    const ticketMatch = url.pathname.match(/^\/rooms\/([^/]+)\/tickets$/);
-    if (request.method === "POST" && ticketMatch?.[1]) {
-      const limited = await enforceRateLimit(request, env, {
-        scope: "connection-ticket",
-        limit: 60,
-        windowSeconds: 60,
-      });
-      if (limited) return limited;
-      return createConnectionTicket(request, env, ticketMatch[1]);
-    }
-
-    const connectMatch = url.pathname.match(/^\/rooms\/([^/]+)\/connect$/);
-    if (connectMatch?.[1]) {
-      const id = env.PARTY_ROOMS.idFromName(connectMatch[1]);
-      return env.PARTY_ROOMS.get(id).fetch(request);
-    }
-
-    return jsonResponse({ error: "Not found" }, { status: 404 });
   },
 };
+
+async function route(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+
+  if (request.method === "GET" && url.pathname === "/health") {
+    return jsonResponse({ ok: true });
+  }
+
+  if (request.method === "GET" && url.pathname.startsWith("/join/")) {
+    const inviteCode = url.pathname.split("/").at(-1)?.toUpperCase();
+    if (!inviteCode) return new Response("Missing invite code", { status: 400 });
+    const roomId = await env.INVITES.get(inviteCode);
+    if (!roomId) return expiredInvitePage();
+    return inviteLandingPage(inviteCode);
+  }
+
+  if (request.method === "POST" && url.pathname === "/rooms") {
+    const limited = await enforceRateLimit(request, env, {
+      scope: "create-room",
+      limit: 10,
+      windowSeconds: 60,
+    });
+    if (limited) return limited;
+    return createRoom(request, env);
+  }
+
+  if (request.method === "POST" && url.pathname === "/rooms/join") {
+    const limited = await enforceRateLimit(request, env, {
+      scope: "join-room",
+      limit: 30,
+      windowSeconds: 60,
+    });
+    if (limited) return limited;
+    return joinRoom(request, env);
+  }
+
+  if (request.method === "GET" && url.pathname.startsWith("/rooms/resolve/")) {
+    const limited = await enforceRateLimit(request, env, {
+      scope: "resolve-room",
+      limit: 60,
+      windowSeconds: 60,
+    });
+    if (limited) return limited;
+    return resolveInviteCode(url, env);
+  }
+
+  const ticketMatch = url.pathname.match(/^\/rooms\/([^/]+)\/tickets$/);
+  if (request.method === "POST" && ticketMatch?.[1]) {
+    const limited = await enforceRateLimit(request, env, {
+      scope: "connection-ticket",
+      limit: 60,
+      windowSeconds: 60,
+    });
+    if (limited) return limited;
+    return createConnectionTicket(request, env, ticketMatch[1]);
+  }
+
+  const connectMatch = url.pathname.match(/^\/rooms\/([^/]+)\/connect$/);
+  if (connectMatch?.[1]) {
+    const id = env.PARTY_ROOMS.idFromName(connectMatch[1]);
+    return env.PARTY_ROOMS.get(id).fetch(request);
+  }
+
+  return jsonResponse({ error: "Not found" }, { status: 404 });
+}
 
 async function createRoom(request: Request, env: Env): Promise<Response> {
   const body = await parseJson<CreateRoomRequest>(request);
