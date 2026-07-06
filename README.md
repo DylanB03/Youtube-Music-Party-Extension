@@ -9,6 +9,14 @@ A Chrome extension and realtime backend for shared listening sessions on the You
 - Cloudflare Worker and Durable Object room backend in `apps/backend`.
 - Product docs in `PRD.md` and `layout.md`.
 
+## Architecture
+
+[![YouTube Music Party client/server interaction and workflow](assets/client-server-workflow.svg)](assets/client-server-workflow.drawio)
+
+The preview links to the editable two-page [draw.io source](assets/client-server-workflow.drawio), which shows the extension contexts, Cloudflare backend, room setup and WebSocket synchronization loop. Open it with [diagrams.net](https://app.diagrams.net/) or the draw.io editor integration in your IDE.
+
+For a detailed written description, see [the architecture and layout plan](layout.md).
+
 ## Local Development
 
 Install dependencies first:

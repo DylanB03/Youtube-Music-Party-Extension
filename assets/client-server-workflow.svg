@@ -1,0 +1,109 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="820" viewBox="0 0 1400 820" role="img" aria-labelledby="title desc">
+  <title id="title">YouTube Music Party client-server interaction</title>
+  <desc id="desc">Architecture overview showing Chrome extension components communicating with a Cloudflare Worker, KV, and a PartyRoom Durable Object.</desc>
+  <defs>
+    <marker id="arrow-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#0c66e4"/></marker>
+    <marker id="arrow-purple" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#6554c0"/></marker>
+    <marker id="arrow-orange" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#e56910"/></marker>
+    <style>
+      .title{font:700 28px Arial,sans-serif;fill:#172b4d}.subtitle{font:15px Arial,sans-serif;fill:#5e6c84}.boundary{stroke-width:2}.head{font:700 14px Arial,sans-serif;letter-spacing:1px}.box-title{font:700 15px Arial,sans-serif;fill:#172b4d}.body{font:13px Arial,sans-serif;fill:#42526e}.edge{fill:none;stroke-width:2.5}.edge-label{font:700 12px Arial,sans-serif}.step{font:700 13px Arial,sans-serif;fill:#172b4d}.step-sub{font:12px Arial,sans-serif;fill:#5e6c84}
+    </style>
+  </defs>
+  <rect width="1400" height="820" fill="#fff"/>
+  <text x="40" y="48" class="title">YouTube Music Party — Client/server interaction</text>
+  <text x="40" y="76" class="subtitle">The extension service worker owns session state and all backend communication.</text>
+
+  <rect x="40" y="110" width="700" height="485" rx="12" fill="#fafbfc" stroke="#97a0af" class="boundary"/>
+  <rect x="40" y="110" width="700" height="44" rx="12" fill="#f1f2f4" stroke="#97a0af" class="boundary"/>
+  <path d="M40 142h700" stroke="#97a0af" stroke-width="2"/>
+  <text x="62" y="138" class="head" fill="#42526e">CHROME EXTENSION</text>
+
+  <rect x="780" y="110" width="580" height="485" rx="12" fill="#fffbf5" stroke="#ff991f" class="boundary"/>
+  <rect x="780" y="110" width="580" height="44" rx="12" fill="#fff4e5" stroke="#ff991f" class="boundary"/>
+  <path d="M780 142h580" stroke="#ff991f" stroke-width="2"/>
+  <text x="802" y="138" class="head" fill="#974f0c">CLOUDFLARE BACKEND</text>
+
+  <g>
+    <rect x="75" y="190" width="230" height="90" rx="10" fill="#e9f2ff" stroke="#0c66e4" stroke-width="2"/>
+    <text x="95" y="220" class="box-title">Side Panel</text>
+    <text x="95" y="244" class="body">Create/join, queue, permissions</text>
+    <text x="95" y="263" class="body">and session status</text>
+  </g>
+  <g>
+    <rect x="75" y="355" width="230" height="100" rx="10" fill="#e3fcef" stroke="#22a06b" stroke-width="2"/>
+    <text x="95" y="385" class="box-title">Content Script</text>
+    <text x="95" y="409" class="body">Observe local playback and DOM</text>
+    <text x="95" y="428" class="body">Apply synchronized playback</text>
+  </g>
+  <g>
+    <rect x="75" y="490" width="230" height="75" rx="10" fill="#e3fcef" stroke="#22a06b" stroke-width="2"/>
+    <text x="95" y="520" class="box-title">Page Bridge</text>
+    <text x="95" y="544" class="body">YouTube Music playerApi</text>
+  </g>
+  <g>
+    <rect x="430" y="275" width="270" height="145" rx="10" fill="#deebff" stroke="#0747a6" stroke-width="3"/>
+    <text x="455" y="309" class="box-title">MV3 Service Worker</text>
+    <text x="455" y="337" class="body">PartyController + PartyClient</text>
+    <text x="455" y="358" class="body">Credentials and room state</text>
+    <text x="455" y="379" class="body">Mutation queue and playback sync</text>
+  </g>
+  <g>
+    <rect x="430" y="475" width="270" height="90" rx="10" fill="#ffebe6" stroke="#c9372c" stroke-width="2"/>
+    <text x="455" y="506" class="box-title">YouTube Music</text>
+    <text x="455" y="530" class="body">DOM + playerApi</text>
+    <text x="455" y="549" class="body">Each listener streams locally</text>
+  </g>
+
+  <g>
+    <rect x="820" y="215" width="225" height="115" rx="10" fill="#fff0b3" stroke="#e2b203" stroke-width="2"/>
+    <text x="842" y="247" class="box-title">Worker API</text>
+    <text x="842" y="272" class="body">HTTP routes + rate limits</text>
+    <text x="842" y="293" class="body">Invite and room routing</text>
+  </g>
+  <g>
+    <ellipse cx="1215" cy="218" rx="105" ry="17" fill="#fff7d6" stroke="#e2b203" stroke-width="2"/>
+    <path d="M1110 218v80c0 10 47 18 105 18s105-8 105-18v-80" fill="#fff7d6" stroke="#e2b203" stroke-width="2"/>
+    <ellipse cx="1215" cy="298" rx="105" ry="18" fill="#fff7d6" stroke="#e2b203" stroke-width="2"/>
+    <text x="1147" y="255" class="box-title">Cloudflare KV</text>
+    <text x="1132" y="278" class="body">invites + rate counters</text>
+  </g>
+  <g>
+    <rect x="1045" y="385" width="275" height="150" rx="10" fill="#fce7f3" stroke="#ae4787" stroke-width="3"/>
+    <text x="1070" y="418" class="box-title">PartyRoom Durable Object</text>
+    <text x="1070" y="445" class="body">Authoritative revision and state</text>
+    <text x="1070" y="466" class="body">Ticket validation + WebSockets</text>
+    <text x="1070" y="487" class="body">Persistence, presence, lifecycle</text>
+    <text x="1070" y="508" class="body">Exactly-once mutation results</text>
+  </g>
+
+  <path d="M305 235H380V320H430" class="edge" stroke="#0c66e4" marker-start="url(#arrow-blue)" marker-end="url(#arrow-blue)"/>
+  <text x="322" y="218" class="edge-label" fill="#0747a6">runtime messages</text>
+  <path d="M305 405H375V375H430" class="edge" stroke="#0c66e4" marker-start="url(#arrow-blue)" marker-end="url(#arrow-blue)"/>
+  <text x="313" y="395" class="edge-label" fill="#0747a6">runtime messages</text>
+  <path d="M190 455V490" class="edge" stroke="#0c66e4" marker-start="url(#arrow-blue)" marker-end="url(#arrow-blue)"/>
+  <path d="M305 527H430" class="edge" stroke="#0c66e4" marker-start="url(#arrow-blue)" marker-end="url(#arrow-blue)"/>
+  <path d="M700 315H820" class="edge" stroke="#e56910" marker-start="url(#arrow-orange)" marker-end="url(#arrow-orange)"/>
+  <text x="718" y="297" class="edge-label" fill="#974f0c">HTTPS setup</text>
+  <path d="M1045 250H1110" class="edge" stroke="#e56910" marker-start="url(#arrow-orange)" marker-end="url(#arrow-orange)"/>
+  <path d="M1045 300V370H1150V385" class="edge" stroke="#e56910" marker-start="url(#arrow-orange)" marker-end="url(#arrow-orange)"/>
+  <path d="M700 375H910V460H1045" class="edge" stroke="#6554c0" marker-start="url(#arrow-purple)" marker-end="url(#arrow-purple)"/>
+  <text x="735" y="400" class="edge-label" fill="#403294">WebSocket commands ⇄ snapshots/results</text>
+
+  <text x="40" y="645" class="head" fill="#42526e">END-TO-END WORKFLOW</text>
+  <g>
+    <rect x="40" y="670" width="200" height="95" rx="10" fill="#e9f2ff" stroke="#0c66e4"/>
+    <text x="60" y="700" class="step">1. Create or join</text><text x="60" y="727" class="step-sub">HTTP returns participant</text><text x="60" y="746" class="step-sub">credentials and room ID</text>
+    <rect x="270" y="670" width="200" height="95" rx="10" fill="#fff0b3" stroke="#e2b203"/>
+    <text x="290" y="700" class="step">2. Request ticket</text><text x="290" y="727" class="step-sub">Bearer token is exchanged</text><text x="290" y="746" class="step-sub">for a short-lived ticket</text>
+    <rect x="500" y="670" width="200" height="95" rx="10" fill="#fce7f3" stroke="#ae4787"/>
+    <text x="520" y="700" class="step">3. Open WebSocket</text><text x="520" y="727" class="step-sub">DO consumes ticket and</text><text x="520" y="746" class="step-sub">sends initial snapshot</text>
+    <rect x="730" y="670" width="200" height="95" rx="10" fill="#fce7f3" stroke="#ae4787"/>
+    <text x="750" y="700" class="step">4. Mutate once</text><text x="750" y="727" class="step-sub">Validate operation ID,</text><text x="750" y="746" class="step-sub">permission and revision</text>
+    <rect x="960" y="670" width="200" height="95" rx="10" fill="#e3fcef" stroke="#22a06b"/>
+    <text x="980" y="700" class="step">5. Broadcast state</text><text x="980" y="727" class="step-sub">Persist, increment revision,</text><text x="980" y="746" class="step-sub">send snapshot + result</text>
+    <rect x="1190" y="670" width="170" height="95" rx="10" fill="#ffebe6" stroke="#c9372c"/>
+    <text x="1210" y="700" class="step">6. Reconcile</text><text x="1210" y="727" class="step-sub">Guests apply canonical</text><text x="1210" y="746" class="step-sub">playback locally</text>
+  </g>
+  <path d="M240 718h30M470 718h30M700 718h30M930 718h30M1160 718h30" stroke="#6554c0" stroke-width="3" marker-end="url(#arrow-purple)"/>
+  <text x="40" y="802" class="subtitle">Audio never passes through the backend — only synchronized state does. Click the diagram in the README for the editable two-page draw.io source.</text>
+</svg>

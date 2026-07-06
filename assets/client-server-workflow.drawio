@@ -1,0 +1,151 @@
+<mxfile host="app.diagrams.net" modified="2026-07-05T00:00:00.000Z" agent="Codex" version="26.0.9" type="device" compressed="false">
+  <diagram id="client-server-architecture" name="Client-server interaction">
+    <mxGraphModel dx="1422" dy="794" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1600" pageHeight="1000" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="title" value="YouTube Music Party — Client/server interaction" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=26;fontStyle=1;fontColor=#172B4D;" vertex="1" parent="1">
+          <mxGeometry x="40" y="25" width="900" height="40" as="geometry"/>
+        </mxCell>
+        <mxCell id="subtitle" value="The MV3 service worker is the single routing and network boundary for the extension." style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=14;fontColor=#5E6C84;" vertex="1" parent="1">
+          <mxGeometry x="40" y="65" width="900" height="30" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="browser-boundary" value="CHROME EXTENSION" style="swimlane;html=1;startSize=38;horizontal=1;rounded=1;arcSize=8;fillColor=#F4F5F7;swimlaneFillColor=#FFFFFF;strokeColor=#97A0AF;fontColor=#42526E;fontStyle=1;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="40" y="120" width="780" height="690" as="geometry"/>
+        </mxCell>
+        <mxCell id="cloud-boundary" value="CLOUDFLARE BACKEND" style="swimlane;html=1;startSize=38;horizontal=1;rounded=1;arcSize=8;fillColor=#FFF4E5;swimlaneFillColor=#FFFBF5;strokeColor=#FF991F;fontColor=#974F0C;fontStyle=1;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="860" y="120" width="690" height="690" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="side-panel" value="&lt;b&gt;Side Panel (React)&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#5E6C84&quot;&gt;Create/join controls, queue, permissions, session status&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fillColor=#E9F2FF;strokeColor=#0C66E4;fontColor=#172B4D;fontSize=14;spacing=10;" vertex="1" parent="1">
+          <mxGeometry x="80" y="190" width="270" height="105" as="geometry"/>
+        </mxCell>
+        <mxCell id="content-script" value="&lt;b&gt;Content Script&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#5E6C84&quot;&gt;Reads player/DOM state, observes local playback, applies party playback&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fillColor=#E3FCEF;strokeColor=#22A06B;fontColor=#172B4D;fontSize=14;spacing=10;" vertex="1" parent="1">
+          <mxGeometry x="80" y="425" width="270" height="115" as="geometry"/>
+        </mxCell>
+        <mxCell id="page-bridge" value="&lt;b&gt;Main-world Page Bridge&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#5E6C84&quot;&gt;Safe CustomEvent wrappers around YouTube Music playerApi&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fillColor=#E3FCEF;strokeColor=#22A06B;fontColor=#172B4D;fontSize=14;spacing=10;" vertex="1" parent="1">
+          <mxGeometry x="80" y="615" width="270" height="105" as="geometry"/>
+        </mxCell>
+        <mxCell id="service-worker" value="&lt;b&gt;MV3 Service Worker&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#5E6C84&quot;&gt;PartyController + PartyClient&lt;br&gt;session credentials and state&lt;br&gt;mutation queue + playback reconciliation&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fillColor=#DEEBFF;strokeColor=#0747A6;strokeWidth=2;fontColor=#172B4D;fontSize=15;spacing=12;" vertex="1" parent="1">
+          <mxGeometry x="475" y="325" width="300" height="170" as="geometry"/>
+        </mxCell>
+        <mxCell id="ytm" value="&lt;b&gt;YouTube Music&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#5E6C84&quot;&gt;DOM + playerApi + each listener's own audio stream&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fillColor=#FFEBE6;strokeColor=#C9372C;fontColor=#172B4D;fontSize=14;spacing=10;" vertex="1" parent="1">
+          <mxGeometry x="430" y="625" width="320" height="95" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="api-worker" value="&lt;b&gt;Cloudflare Worker API&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#5E6C84&quot;&gt;HTTP routing, validation, invite pages, per-IP rate limits, Durable Object proxy&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fillColor=#FFF0B3;strokeColor=#E2B203;fontColor=#172B4D;fontSize=14;spacing=10;" vertex="1" parent="1">
+          <mxGeometry x="900" y="260" width="270" height="135" as="geometry"/>
+        </mxCell>
+        <mxCell id="invite-kv" value="&lt;b&gt;INVITES + RATE_LIMITS KV&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#5E6C84&quot;&gt;Invite code → room ID&lt;br&gt;fixed-window counters&lt;/font&gt;" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#FFF7D6;strokeColor=#E2B203;fontColor=#172B4D;fontSize=13;spacingTop=8;" vertex="1" parent="1">
+          <mxGeometry x="1240" y="205" width="250" height="120" as="geometry"/>
+        </mxCell>
+        <mxCell id="durable-object" value="&lt;b&gt;PartyRoom Durable Object&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#5E6C84&quot;&gt;Authoritative room revision&lt;br&gt;participants, permissions, playback, queue&lt;br&gt;ticket validation + WebSocket broadcast&lt;br&gt;presence, host transfer, expiration&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fillColor=#FCE7F3;strokeColor=#AE4787;strokeWidth=2;fontColor=#172B4D;fontSize=14;spacing=11;" vertex="1" parent="1">
+          <mxGeometry x="1210" y="430" width="300" height="185" as="geometry"/>
+        </mxCell>
+        <mxCell id="do-storage" value="&lt;b&gt;Durable Object storage&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#5E6C84&quot;&gt;Room state, credentials, tickets, operation results&lt;/font&gt;" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#F8E6F0;strokeColor=#AE4787;fontColor=#172B4D;fontSize=13;spacingTop=8;" vertex="1" parent="1">
+          <mxGeometry x="1235" y="665" width="250" height="110" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="e-panel-sw" value="typed runtime messages" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;startArrow=classic;startFill=1;endArrow=classic;endFill=1;strokeColor=#0C66E4;fontColor=#0747A6;fontSize=12;labelBackgroundColor=#FFFFFF;" edge="1" parent="1" source="side-panel" target="service-worker">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-content-sw" value="typed runtime messages" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;startArrow=classic;startFill=1;endArrow=classic;endFill=1;strokeColor=#22A06B;fontColor=#216E4E;fontSize=12;labelBackgroundColor=#FFFFFF;" edge="1" parent="1" source="content-script" target="service-worker">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-content-page" value="CustomEvents" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;startArrow=classic;startFill=1;endArrow=classic;endFill=1;strokeColor=#22A06B;fontColor=#216E4E;fontSize=12;labelBackgroundColor=#FFFFFF;" edge="1" parent="1" source="content-script" target="page-bridge">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-page-ytm" value="playerApi" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;startArrow=classic;startFill=1;endArrow=classic;endFill=1;strokeColor=#C9372C;fontColor=#AE2E24;fontSize=12;labelBackgroundColor=#FFFFFF;" edge="1" parent="1" source="page-bridge" target="ytm">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-content-ytm" value="DOM observation" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;startArrow=classic;startFill=1;endArrow=classic;endFill=1;strokeColor=#C9372C;fontColor=#AE2E24;fontSize=12;labelBackgroundColor=#FFFFFF;" edge="1" parent="1" source="content-script" target="ytm">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-sw-api" value="HTTPS: create / join / ticket" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;startArrow=classic;startFill=1;endArrow=classic;endFill=1;strokeColor=#FF8B00;fontColor=#974F0C;fontSize=12;fontStyle=1;labelBackgroundColor=#FFFFFF;" edge="1" parent="1" source="service-worker" target="api-worker">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-api-kv" value="resolve / store" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;startArrow=classic;startFill=1;endArrow=classic;endFill=1;strokeColor=#E2B203;fontColor=#7F5F01;fontSize=12;labelBackgroundColor=#FFFBF5;" edge="1" parent="1" source="api-worker" target="invite-kv">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-api-do" value="initialize / join / ticket / proxy" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;startArrow=classic;startFill=1;endArrow=classic;endFill=1;strokeColor=#AE4787;fontColor=#943D73;fontSize=12;labelBackgroundColor=#FFFBF5;" edge="1" parent="1" source="api-worker" target="durable-object">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-sw-do" value="WebSocket: commands ⇄ snapshots / results" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;startArrow=classic;startFill=1;endArrow=classic;endFill=1;strokeColor=#6554C0;strokeWidth=3;fontColor=#403294;fontSize=13;fontStyle=1;labelBackgroundColor=#FFFFFF;" edge="1" parent="1" source="service-worker" target="durable-object">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points"><mxPoint x="1030" y="535"/></Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e-do-storage" value="persist / restore" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;startArrow=classic;startFill=1;endArrow=classic;endFill=1;strokeColor=#AE4787;fontColor=#943D73;fontSize=12;labelBackgroundColor=#FFFBF5;" edge="1" parent="1" source="durable-object" target="do-storage">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="note" value="&lt;b&gt;Key boundary:&lt;/b&gt; audio is never sent through the backend. The server synchronizes track identity, playback position, queue, and permissions; every participant streams from their own YouTube Music session." style="shape=note;whiteSpace=wrap;html=1;backgroundOutline=1;size=15;fillColor=#E9F2FF;strokeColor=#0C66E4;fontColor=#172B4D;fontSize=13;spacing=10;" vertex="1" parent="1">
+          <mxGeometry x="250" y="850" width="1100" height="85" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+
+  <diagram id="end-to-end-workflow" name="End-to-end workflow">
+    <mxGraphModel dx="1422" dy="794" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1800" pageHeight="1350" math="0" shadow="0">
+      <root>
+        <mxCell id="w0"/>
+        <mxCell id="w1" parent="w0"/>
+        <mxCell id="w-title" value="YouTube Music Party — End-to-end workflow" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=26;fontStyle=1;fontColor=#172B4D;" vertex="1" parent="w1">
+          <mxGeometry x="40" y="25" width="1000" height="40" as="geometry"/>
+        </mxCell>
+        <mxCell id="w-subtitle" value="Solid arrows are requests/events. Dashed arrows are responses or broadcasts." style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=14;fontColor=#5E6C84;" vertex="1" parent="w1">
+          <mxGeometry x="40" y="65" width="900" height="30" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="a-user" value="USER + YOUTUBE MUSIC" style="swimlane;html=1;startSize=42;horizontal=1;rounded=0;fillColor=#FFEBE6;swimlaneFillColor=#FFF8F6;strokeColor=#C9372C;fontColor=#AE2E24;fontStyle=1;fontSize=14;" vertex="1" parent="w1"><mxGeometry x="40" y="120" width="300" height="1140" as="geometry"/></mxCell>
+        <mxCell id="a-client" value="EXTENSION SERVICE WORKER" style="swimlane;html=1;startSize=42;horizontal=1;rounded=0;fillColor=#DEEBFF;swimlaneFillColor=#F7FAFF;strokeColor=#0C66E4;fontColor=#0747A6;fontStyle=1;fontSize=14;" vertex="1" parent="w1"><mxGeometry x="390" y="120" width="360" height="1140" as="geometry"/></mxCell>
+        <mxCell id="a-api" value="CLOUDFLARE WORKER API" style="swimlane;html=1;startSize=42;horizontal=1;rounded=0;fillColor=#FFF0B3;swimlaneFillColor=#FFFCF0;strokeColor=#E2B203;fontColor=#7F5F01;fontStyle=1;fontSize=14;" vertex="1" parent="w1"><mxGeometry x="800" y="120" width="300" height="1140" as="geometry"/></mxCell>
+        <mxCell id="a-do" value="PARTYROOM DURABLE OBJECT" style="swimlane;html=1;startSize=42;horizontal=1;rounded=0;fillColor=#FCE7F3;swimlaneFillColor=#FFF7FB;strokeColor=#AE4787;fontColor=#943D73;fontStyle=1;fontSize=14;" vertex="1" parent="w1"><mxGeometry x="1150" y="120" width="370" height="1140" as="geometry"/></mxCell>
+        <mxCell id="a-kv" value="KV / DO STORAGE" style="swimlane;html=1;startSize=42;horizontal=1;rounded=0;fillColor=#E3FCEF;swimlaneFillColor=#F7FFFB;strokeColor=#22A06B;fontColor=#216E4E;fontStyle=1;fontSize=14;" vertex="1" parent="w1"><mxGeometry x="1570" y="120" width="190" height="1140" as="geometry"/></mxCell>
+
+        <mxCell id="phase-setup" value="SETUP: CREATE OR JOIN" style="text;html=1;strokeColor=#97A0AF;fillColor=#F4F5F7;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=1;fontSize=13;fontStyle=1;fontColor=#42526E;spacingLeft=10;" vertex="1" parent="w1"><mxGeometry x="55" y="180" width="1690" height="32" as="geometry"/></mxCell>
+        <mxCell id="step1" value="1. Choose Create or Join" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#C9372C;fontColor=#172B4D;fontSize=13;spacing=8;" vertex="1" parent="w1"><mxGeometry x="75" y="235" width="230" height="55" as="geometry"/></mxCell>
+        <mxCell id="step2" value="2. Capture local playback (create), then POST /rooms or /rooms/join" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#0C66E4;fontColor=#172B4D;fontSize=13;spacing=8;" vertex="1" parent="w1"><mxGeometry x="430" y="225" width="280" height="75" as="geometry"/></mxCell>
+        <mxCell id="step3" value="3. Rate-limit + validate; map invite code; initialize or join the named room" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#E2B203;fontColor=#172B4D;fontSize=13;spacing=8;" vertex="1" parent="w1"><mxGeometry x="830" y="225" width="240" height="75" as="geometry"/></mxCell>
+        <mxCell id="step4" value="4. Create participant, token, initial authoritative state; persist" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#AE4787;fontColor=#172B4D;fontSize=13;spacing=8;" vertex="1" parent="w1"><mxGeometry x="1195" y="225" width="280" height="75" as="geometry"/></mxCell>
+        <mxCell id="step5" value="5. Return roomId, inviteCode, participantId, participantToken" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#0C66E4;fontColor=#172B4D;fontSize=13;spacing=8;" vertex="1" parent="w1"><mxGeometry x="430" y="335" width="280" height="70" as="geometry"/></mxCell>
+
+        <mxCell id="f1" value="runtime message" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=classic;strokeColor=#C9372C;fontSize=11;labelBackgroundColor=#FFFFFF;" edge="1" parent="w1" source="step1" target="step2"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="f2" value="HTTPS" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=classic;strokeColor=#0C66E4;fontSize=11;labelBackgroundColor=#FFFFFF;" edge="1" parent="w1" source="step2" target="step3"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="f3" value="internal fetch" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=classic;strokeColor=#E2B203;fontSize=11;labelBackgroundColor=#FFFFFF;" edge="1" parent="w1" source="step3" target="step4"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="f4" value="KV + SQLite" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=classic;strokeColor=#22A06B;fontSize=11;labelBackgroundColor=#FFFFFF;" edge="1" parent="w1" source="step4" target="a-kv"><mxGeometry relative="1" as="geometry"><mxPoint x="1665" y="262" as="targetPoint"/></mxGeometry></mxCell>
+        <mxCell id="f5" value="credentials" style="edgeStyle=orthogonalEdgeStyle;html=1;dashed=1;endArrow=classic;strokeColor=#6554C0;fontSize=11;labelBackgroundColor=#FFFFFF;" edge="1" parent="w1" source="step4" target="step5"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1335" y="370"/></Array></mxGeometry></mxCell>
+
+        <mxCell id="phase-connect" value="CONNECT: SHORT-LIVED TICKET → WEBSOCKET" style="text;html=1;strokeColor=#97A0AF;fillColor=#F4F5F7;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=1;fontSize=13;fontStyle=1;fontColor=#42526E;spacingLeft=10;" vertex="1" parent="w1"><mxGeometry x="55" y="445" width="1690" height="32" as="geometry"/></mxCell>
+        <mxCell id="step6" value="6. POST /rooms/{id}/tickets with bearer participant token" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#0C66E4;fontColor=#172B4D;fontSize=13;spacing=8;" vertex="1" parent="w1"><mxGeometry x="430" y="505" width="280" height="70" as="geometry"/></mxCell>
+        <mxCell id="step7" value="7. Forward credentials for validation" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#E2B203;fontColor=#172B4D;fontSize=13;spacing=8;" vertex="1" parent="w1"><mxGeometry x="830" y="510" width="240" height="60" as="geometry"/></mxCell>
+        <mxCell id="step8" value="8. Issue one-use ticket; then consume it on WebSocket upgrade" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#AE4787;fontColor=#172B4D;fontSize=13;spacing=8;" vertex="1" parent="w1"><mxGeometry x="1195" y="500" width="280" height="80" as="geometry"/></mxCell>
+        <mxCell id="step9" value="9. GET /rooms/{id}/connect?ticket=… (Upgrade: websocket)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#6554C0;strokeWidth=2;fontColor=#172B4D;fontSize=13;spacing=8;" vertex="1" parent="w1"><mxGeometry x="430" y="615" width="280" height="75" as="geometry"/></mxCell>
+        <mxCell id="step10" value="10. Accept socket; send initial room.snapshot and broadcast presence" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#AE4787;fontColor=#172B4D;fontSize=13;spacing=8;" vertex="1" parent="w1"><mxGeometry x="1195" y="610" width="280" height="80" as="geometry"/></mxCell>
+        <mxCell id="f6" value="HTTPS" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=classic;strokeColor=#0C66E4;fontSize=11;labelBackgroundColor=#FFFFFF;" edge="1" parent="w1" source="step6" target="step7"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="f7" value="internal fetch" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=classic;strokeColor=#E2B203;fontSize=11;labelBackgroundColor=#FFFFFF;" edge="1" parent="w1" source="step7" target="step8"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="f8" value="ticket response" style="edgeStyle=orthogonalEdgeStyle;html=1;dashed=1;endArrow=classic;strokeColor=#6554C0;fontSize=11;labelBackgroundColor=#FFFFFF;" edge="1" parent="w1" source="step8" target="step9"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1335" y="652"/></Array></mxGeometry></mxCell>
+        <mxCell id="f9" value="Worker proxies upgrade" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=classic;strokeColor=#6554C0;strokeWidth=2;fontSize=11;labelBackgroundColor=#FFFFFF;" edge="1" parent="w1" source="step9" target="step10"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="950" y="652"/></Array></mxGeometry></mxCell>
+
+        <mxCell id="phase-live" value="LIVE PARTY LOOP: EVENTS → AUTHORITATIVE MUTATION → RECONCILIATION" style="text;html=1;strokeColor=#97A0AF;fillColor=#F4F5F7;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=1;fontSize=13;fontStyle=1;fontColor=#42526E;spacingLeft=10;" vertex="1" parent="w1"><mxGeometry x="55" y="735" width="1690" height="32" as="geometry"/></mxCell>
+        <mxCell id="step11" value="11. UI action or local playback event" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#C9372C;fontColor=#172B4D;fontSize=13;spacing=8;" vertex="1" parent="w1"><mxGeometry x="75" y="805" width="230" height="65" as="geometry"/></mxCell>
+        <mxCell id="step12" value="12. Build typed command with operationId + expectedRevision; queue while offline" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#0C66E4;fontColor=#172B4D;fontSize=13;spacing=8;" vertex="1" parent="w1"><mxGeometry x="430" y="795" width="280" height="85" as="geometry"/></mxCell>
+        <mxCell id="step13" value="13. Validate shape, size, rate, participant permission, and room revision" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#AE4787;fontColor=#172B4D;fontSize=13;spacing=8;" vertex="1" parent="w1"><mxGeometry x="1195" y="795" width="280" height="85" as="geometry"/></mxCell>
+        <mxCell id="step14" value="14. Apply mutation once, increment revision, cache operation result, persist" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#AE4787;fontColor=#172B4D;fontSize=13;spacing=8;" vertex="1" parent="w1"><mxGeometry x="1195" y="915" width="280" height="85" as="geometry"/></mxCell>
+        <mxCell id="step15" value="15. Broadcast room.snapshot; return operation.result accepted/rejected" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#6554C0;strokeWidth=2;fontColor=#172B4D;fontSize=13;spacing=8;" vertex="1" parent="w1"><mxGeometry x="1195" y="1035" width="280" height="85" as="geometry"/></mxCell>
+        <mxCell id="step16" value="16. Update side panel; guests reconcile canonical playback via content script/page bridge" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#0C66E4;fontColor=#172B4D;fontSize=13;spacing=8;" vertex="1" parent="w1"><mxGeometry x="430" y="1035" width="280" height="85" as="geometry"/></mxCell>
+        <mxCell id="step17" value="17. Apply track / play / pause / seek locally" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#C9372C;fontColor=#172B4D;fontSize=13;spacing=8;" vertex="1" parent="w1"><mxGeometry x="75" y="1045" width="230" height="65" as="geometry"/></mxCell>
+        <mxCell id="f10" value="runtime message" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=classic;strokeColor=#C9372C;fontSize=11;labelBackgroundColor=#FFFFFF;" edge="1" parent="w1" source="step11" target="step12"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="f11" value="WebSocket command" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=classic;strokeColor=#6554C0;strokeWidth=2;fontSize=11;labelBackgroundColor=#FFFFFF;" edge="1" parent="w1" source="step12" target="step13"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="950" y="837"/></Array></mxGeometry></mxCell>
+        <mxCell id="f12" value="valid mutation" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=classic;strokeColor=#AE4787;fontSize=11;labelBackgroundColor=#FFFFFF;" edge="1" parent="w1" source="step13" target="step14"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="f13" value="persist" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=classic;strokeColor=#22A06B;fontSize=11;labelBackgroundColor=#FFFFFF;" edge="1" parent="w1" source="step14" target="a-kv"><mxGeometry relative="1" as="geometry"><mxPoint x="1665" y="957" as="targetPoint"/></mxGeometry></mxCell>
+        <mxCell id="f14" value="snapshot + result" style="edgeStyle=orthogonalEdgeStyle;html=1;dashed=1;endArrow=classic;strokeColor=#6554C0;strokeWidth=2;fontSize=11;labelBackgroundColor=#FFFFFF;" edge="1" parent="w1" source="step15" target="step16"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="f15" value="runtime / CustomEvent" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=classic;strokeColor=#0C66E4;fontSize=11;labelBackgroundColor=#FFFFFF;" edge="1" parent="w1" source="step16" target="step17"><mxGeometry relative="1" as="geometry"/></mxCell>
+
+        <mxCell id="reconnect-note" value="&lt;b&gt;Reconnect behavior:&lt;/b&gt; request a fresh ticket, reopen the socket with exponential backoff, resend pending operation IDs, then request a snapshot. Cached operation results prevent duplicate execution." style="shape=note;whiteSpace=wrap;html=1;backgroundOutline=1;size=15;fillColor=#E9F2FF;strokeColor=#0C66E4;fontColor=#172B4D;fontSize=13;spacing=10;" vertex="1" parent="w1"><mxGeometry x="300" y="1165" width="1200" height="70" as="geometry"/></mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
