@@ -1,26 +1,28 @@
 {
-  "name": "@ytm-party/extension",
+  "name": "togethertune",
   "private": true,
   "version": "0.1.0",
   "type": "module",
   "scripts": {
     "dev": "wxt",
     "build": "wxt build",
+    "zip": "wxt zip",
     "check": "tsc --noEmit",
     "test": "vitest run"
   },
   "dependencies": {
-    "@vitejs/plugin-react": "^4.5.1",
-    "@wxt-dev/module-react": "^1.1.3",
     "@ytm-party/shared": "file:../../packages/shared",
     "react": "^19.1.0",
-    "react-dom": "^19.1.0",
-    "wxt": "^0.20.6"
+    "react-dom": "^19.1.0"
   },
   "devDependencies": {
+    "@vitejs/plugin-react": "^4.5.1",
+    "@wxt-dev/module-react": "^1.2.2",
     "@types/chrome": "^0.0.326",
     "@types/react": "^19.1.6",
     "@types/react-dom": "^19.1.5",
-    "typescript": "^5.8.3"
+    "typescript": "^5.8.3",
+    "vite": "^7.3.5",
+    "wxt": "^0.20.27"
   }
 }

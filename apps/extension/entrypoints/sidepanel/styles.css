@@ -95,6 +95,28 @@ input:not([type="checkbox"]):not([type="radio"]) {
   margin: 0;
 }
 
+.privacy-note,
+.footer {
+  color: #7b655c;
+  font-family: system-ui, sans-serif;
+  font-size: 0.7rem;
+  line-height: 1.4;
+  margin: 0;
+}
+
+.privacy-note a,
+.footer a {
+  color: #7b2d18;
+}
+
+.footer {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.65rem;
+  padding: 0.25rem;
+}
+
 .notice {
   border: 0;
   border-radius: 0.65rem;
@@ -129,12 +151,24 @@ input:not([type="checkbox"]):not([type="radio"]) {
 }
 
 .join-row,
+.party-heading-row,
 .status-row,
 .now-playing-row {
   align-items: center;
   display: flex;
   gap: 0.6rem;
   justify-content: space-between;
+}
+
+.leave-party {
+  border: 1px solid #b82f22;
+  background: transparent;
+  color: #8f241a;
+}
+
+.leave-party:hover:not(:disabled),
+.leave-party:focus-visible {
+  background: #ffe1d8;
 }
 
 .prepared-invite {
@@ -165,11 +199,6 @@ input:not([type="checkbox"]):not([type="radio"]) {
 button.compact {
   font-size: 0.8rem;
   padding: 0.4rem 0.65rem;
-}
-
-.status-card .quiet {
-  font-size: 0.8rem;
-  margin-top: 0;
 }
 
 .invite-code {

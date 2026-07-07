@@ -99,6 +99,9 @@ test("loads the extension content script on YouTube Music", async () => {
     });
     await extensionPage.getByRole("button", { name: "Create party" }).click();
     await expect(extensionPage.getByText("Invite", { exact: true })).toBeVisible();
+    await expect(
+      extensionPage.getByRole("button", { name: "Leave party" }),
+    ).toBeVisible();
 
     await musicPage.evaluate(() => {
       document.querySelector("ytmusic-menu-popup-renderer")?.remove();
@@ -295,6 +298,11 @@ test("loads the extension content script on YouTube Music", async () => {
     expect(actualPlayerPlayback.data.track.title).toBe("Native Auto Next");
     expect(actualPlayerPlayback.data.track.artist).toBe("Native Artist");
     await expect(musicPage).toHaveURL(/watch\?v=party-spa-navigation/);
+
+    await extensionPage.getByRole("button", { name: "Leave party" }).click();
+    await expect(
+      extensionPage.getByRole("button", { name: "Create party" }),
+    ).toBeVisible();
   } finally {
     await context.close();
   }

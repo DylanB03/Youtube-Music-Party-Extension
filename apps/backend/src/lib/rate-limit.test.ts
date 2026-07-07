@@ -20,7 +20,7 @@ function envWith(rateLimits: FakeKv): Env {
   return {
     RATE_LIMITS: rateLimits as unknown as KVNamespace,
     INVITES: new FakeKv() as unknown as KVNamespace,
-    PARTY_ROOMS: {} as unknown as DurableObjectNamespace,
+    PARTY_ROOMS: {} as unknown as Env["PARTY_ROOMS"],
   };
 }
 

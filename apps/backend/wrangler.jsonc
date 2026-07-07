@@ -1,0 +1,45 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "youtube-music-party-backend",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "upload_source_maps": true,
+  "observability": {
+    "enabled": true,
+    "logs": {
+      "enabled": true,
+      "head_sampling_rate": 1
+    },
+    "traces": {
+      "enabled": true,
+      "head_sampling_rate": 0.1
+    }
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "PARTY_ROOMS",
+        "class_name": "PartyRoom"
+      }
+    ]
+  },
+  "kv_namespaces": [
+    {
+      "binding": "INVITES",
+      "id": "3eafc67874fd4b2d938823b1f106dc37",
+      "preview_id": "9922c5d5ace54a5b8fa72370f2a74a7d"
+    },
+    {
+      "binding": "RATE_LIMITS",
+      "id": "fb7b637331294d10b438eb33bfc0ba58",
+      "preview_id": "d3d5b61128614bafa18a793a014f4228"
+    }
+  ],
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["PartyRoom"]
+    }
+  ]
+}

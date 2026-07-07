@@ -24,6 +24,13 @@ describe("YouTube Music playback transitions", () => {
     expect(detector.observe(playback("youtube-next", 0))).toBe("ended");
   });
 
+  it("allows for YouTube Music transitioning before the reported duration", () => {
+    const detector = new PlaybackTransitionDetector();
+    detector.observe(playback("current", 168));
+
+    expect(detector.observe(playback("youtube-next", 0))).toBe("ended");
+  });
+
   it("does not guess that a track ended from elapsed time alone", () => {
     const detector = new PlaybackTransitionDetector();
     detector.observe({

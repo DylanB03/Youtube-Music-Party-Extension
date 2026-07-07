@@ -2,7 +2,11 @@ import type { LocalPlaybackState } from "@ytm-party/shared";
 
 export type PlaybackTransition = "ended" | "track_changed" | null;
 
-export const NATURAL_END_THRESHOLD_SECONDS = 3;
+// YouTube Music can replace the active media before its reported duration is
+// exhausted (for example during an automatic transition). Keep this wider
+// than the polling interval so those native transitions are not mistaken for
+// a deliberate song selection and sent through the host-requeue flow.
+export const NATURAL_END_THRESHOLD_SECONDS = 15;
 
 export function looksLikeNaturalTrackAdvance(
   previous: LocalPlaybackState,

@@ -28,6 +28,15 @@ export const apiWorker = {
     try {
       return await route(request, env);
     } catch (error) {
+      const url = new URL(request.url);
+      console.error(
+        JSON.stringify({
+          message: "Unhandled API error",
+          method: request.method,
+          path: url.pathname,
+          error: error instanceof Error ? error.message : String(error),
+        }),
+      );
       return errorResponse(error) ?? jsonResponse({ error: "Internal error" }, { status: 500 });
     }
   },

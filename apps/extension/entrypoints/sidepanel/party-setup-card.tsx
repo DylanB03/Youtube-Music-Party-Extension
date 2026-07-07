@@ -82,6 +82,17 @@ export function PartySetupCard({
           {pendingAction === "join" ? "Joining..." : "Join"}
         </button>
       </div>
+      <p className="privacy-note">
+        Creating or joining a party shares your display name and current playback
+        and queue details with party members through our Cloudflare-hosted service.{" "}
+        <a
+          href="https://github.com/DylanB03/Youtube-Music-Party-Extension/blob/main/PRIVACY.md"
+          target="_blank"
+          rel="noreferrer"
+        >
+          Privacy details
+        </a>
+      </p>
     </section>
   );
 }

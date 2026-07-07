@@ -25,7 +25,10 @@ jobs:
       - run: npm ci
       - run: npm run check
       - run: npm test
+      - run: npm run audit:production
       - run: npm run build:extension
+      - run: npm run verify:extension
+      - run: npm run release:extension
       - run: npm run build:backend
         env:
           XDG_CONFIG_HOME: /tmp

@@ -1,9 +1,6 @@
 import type { ServerMessage } from "@ytm-party/shared";
 
-export type Env = {
-  PARTY_ROOMS: DurableObjectNamespace;
-  INVITES: KVNamespace;
-  RATE_LIMITS: KVNamespace;
+export type Env = Cloudflare.Env & {
   HOST_RECONNECT_GRACE_MS?: string;
   MAX_PARTICIPANTS?: string;
   MAX_QUEUE_ITEMS?: string;

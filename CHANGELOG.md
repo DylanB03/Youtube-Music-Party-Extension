@@ -4,6 +4,14 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Release preparation
+
+- Renamed the public-facing extension to TogetherTune for YouTube Music™ and added independent-project and trademark disclosures.
+- Added required manifest icons, a toolbar action, Chrome 116 compatibility, production-safe backend configuration, and reproducible ZIP packaging.
+- Removed the unnecessary broad `tabs` permission.
+- Added privacy, security, support, licensing, store-listing, permission-justification, and privacy-form documentation.
+- Enabled backend logs and traces and refreshed release-tool dependencies.
+
 ### Added
 
 - Built a Chrome Manifest V3 extension for YouTube Music with a content script,

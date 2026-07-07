@@ -1,0 +1,44 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "youtube-music-party-backend-e2e",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "enabled": false
+  },
+  "vars": {
+    "HOST_RECONNECT_GRACE_MS": "250",
+    "MAX_PARTICIPANTS": "2",
+    "MAX_QUEUE_ITEMS": "3",
+    "ROOM_MAX_AGE_MS": "30000",
+    "ROOM_IDLE_TTL_MS": "2000",
+    "INVITE_TTL_SECONDS": "60"
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "PARTY_ROOMS",
+        "class_name": "PartyRoom"
+      }
+    ]
+  },
+  "kv_namespaces": [
+    {
+      "binding": "INVITES",
+      "id": "e2e-kv",
+      "preview_id": "e2e-kv"
+    },
+    {
+      "binding": "RATE_LIMITS",
+      "id": "e2e-rate-limits-kv",
+      "preview_id": "e2e-rate-limits-kv"
+    }
+  ],
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["PartyRoom"]
+    }
+  ]
+}

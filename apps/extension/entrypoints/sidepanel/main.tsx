@@ -33,14 +33,25 @@ function App() {
   return (
     <main className="panel">
       <section className="hero">
-        <p className="eyebrow">YouTube Music Party</p>
+        <p className="eyebrow">TogetherTune</p>
         <h1>Listen together without passing the aux cord around.</h1>
         <p className="muted">Create a room, share a code, and keep everyone on the same track.</p>
       </section>
 
       {view.roomId ? (
         <section className="card stack">
-          <p className="label">Invite</p>
+          <div className="party-heading-row">
+            <p className="label">Invite</p>
+            <button
+              className="leave-party compact"
+              disabled={Boolean(pendingAction)}
+              onClick={() =>
+                act("leave", { type: "party.leave" }, "You left the party.")
+              }
+            >
+              {pendingAction === "leave" ? "Leaving..." : "Leave party"}
+            </button>
+          </div>
           <InviteCodeButton
             inviteCode={view.state?.inviteCode ?? "------"}
             disabled={Boolean(pendingAction) || !view.state?.inviteCode}
@@ -163,15 +174,6 @@ function App() {
                 Skip
               </button>
             </div>
-            <button
-              className="quiet"
-              disabled={Boolean(pendingAction)}
-              onClick={() =>
-                act("leave", { type: "party.leave" }, "You left the party.")
-              }
-            >
-              {pendingAction === "leave" ? "Leaving..." : "Leave party"}
-            </button>
           </section>
 
           {isHost && view.state ? (
@@ -221,6 +223,23 @@ function App() {
           </section>
         </>
       )}
+      <footer className="footer">
+        <span>Independent and not affiliated with Google or YouTube.</span>
+        <a
+          href="https://github.com/DylanB03/Youtube-Music-Party-Extension/blob/main/PRIVACY.md"
+          target="_blank"
+          rel="noreferrer"
+        >
+          Privacy
+        </a>
+        <a
+          href="https://github.com/DylanB03/Youtube-Music-Party-Extension/issues"
+          target="_blank"
+          rel="noreferrer"
+        >
+          Support
+        </a>
+      </footer>
     </main>
   );
 

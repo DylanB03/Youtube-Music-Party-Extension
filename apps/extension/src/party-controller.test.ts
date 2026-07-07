@@ -788,6 +788,48 @@ describe("party controller orchestration", () => {
     ).toHaveLength(0);
   });
 
+  it("auto-advances when YouTube Music transitions early near the end", async () => {
+    vi.useFakeTimers();
+    try {
+      const { controller, connection } = await createHostController();
+      connection.sent = [];
+
+      await controller.handleLocalPlaybackEvent({
+        type: "local.progress",
+        playback: {
+          track: { videoId: "current-track" },
+          paused: false,
+          positionSeconds: 168,
+          durationSeconds: 180,
+          buffering: false,
+        },
+      });
+      connection.sent = [];
+
+      await controller.handleLocalPlaybackEvent({
+        type: "local.track_changed",
+        playback: {
+          track: { videoId: "youtube-auto-next" },
+          paused: false,
+          positionSeconds: 0,
+          buffering: false,
+        },
+      });
+
+      await vi.advanceTimersByTimeAsync(1_500);
+      await flushControllerWork();
+
+      expect(
+        connection.sent.filter((message) => message.type === "playback.skip"),
+      ).toHaveLength(1);
+      expect(
+        connection.sent.filter((message) => message.type === "playback.host_requeue"),
+      ).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("auto-advances after a fast seek directly to the end", async () => {
     const { controller, connection } = await createHostController();
     connection.sent = [];
