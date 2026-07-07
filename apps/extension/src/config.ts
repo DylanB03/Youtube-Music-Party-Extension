@@ -1,7 +1,12 @@
 const DEVELOPMENT_API_BASE_URL = "http://localhost:8787";
 const configuredApiBaseUrl = import.meta.env.WXT_PUBLIC_PARTY_API_BASE_URL;
+const allowInsecureApi = import.meta.env.WXT_ALLOW_INSECURE_API === "true";
 
-if (!import.meta.env.DEV && !configuredApiBaseUrl?.startsWith("https://")) {
+if (
+  !import.meta.env.DEV &&
+  !allowInsecureApi &&
+  !configuredApiBaseUrl?.startsWith("https://")
+) {
   throw new Error("Production extension builds require an HTTPS backend URL.");
 }
 
