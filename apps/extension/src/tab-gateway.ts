@@ -63,7 +63,9 @@ export class YouTubeMusicTabGateway {
       return preferredTabId;
     }
     const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
-    return tab?.id;
+    if (tab?.id && tab.url?.startsWith(YOUTUBE_MUSIC_URL_PREFIX)) return tab.id;
+    const [musicTab] = await browser.tabs.query({ url: `${YOUTUBE_MUSIC_URL_PREFIX}*` });
+    return musicTab?.id ?? tab?.id;
   }
 
   private async tabExists(tabId: number): Promise<boolean> {

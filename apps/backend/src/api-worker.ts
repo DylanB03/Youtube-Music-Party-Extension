@@ -98,6 +98,17 @@ async function route(request: Request, env: Env): Promise<Response> {
     return createConnectionTicket(request, env, ticketMatch[1]);
   }
 
+  const leaveMatch = url.pathname.match(/^\/rooms\/([^/]+)\/leave$/);
+  if (request.method === "POST" && leaveMatch?.[1]) {
+    const limited = await enforceRateLimit(request, env, {
+      scope: "leave-room",
+      limit: 60,
+      windowSeconds: 60,
+    });
+    if (limited) return limited;
+    return leaveRoom(request, env, leaveMatch[1]);
+  }
+
   const connectMatch = url.pathname.match(/^\/rooms\/([^/]+)\/connect$/);
   if (connectMatch?.[1]) {
     const id = env.PARTY_ROOMS.idFromName(connectMatch[1]);
@@ -234,4 +245,32 @@ async function createConnectionTicket(
 
   const response = (await ticketResponse.json()) as ConnectionTicketResponse;
   return jsonResponse(response, { status: 201 });
+}
+
+async function leaveRoom(
+  request: Request,
+  env: Env,
+  roomId: string,
+): Promise<Response> {
+  const authorization = request.headers.get("Authorization");
+  const participantToken = authorization?.startsWith("Bearer ")
+    ? authorization.slice("Bearer ".length)
+    : "";
+  const body = await parseJson<{
+    participantId: string;
+  }>(request);
+  if (!participantToken || !body.participantId) {
+    return jsonResponse({ error: "Missing participant credentials" }, { status: 401 });
+  }
+
+  const id = env.PARTY_ROOMS.idFromName(roomId);
+  const room = env.PARTY_ROOMS.get(id);
+  return room.fetch("https://party-room.local/leave", {
+    method: "POST",
+    body: JSON.stringify({
+      participantId: body.participantId,
+      participantToken,
+      nowMs: Date.now(),
+    }),
+  });
 }

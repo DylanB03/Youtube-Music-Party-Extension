@@ -3,6 +3,7 @@ import type { PartyRoomState } from "@ytm-party/shared";
 import {
   applyRoomMutation,
   markParticipantDisconnected,
+  removeParticipant,
   removeInactiveParticipants,
   transferHost,
 } from "./room-state";
@@ -153,7 +154,7 @@ describe("party room mutations", () => {
     });
   });
 
-  it("lets the host reorder and remove queue items", () => {
+  it("lets hosts and queue-enabled guests reorder queue items", () => {
     const state = createRoomState();
     state.queue = [
       {
@@ -185,6 +186,21 @@ describe("party room mutations", () => {
     expect(reorderResult.error).toBeUndefined();
     expect(state.queue.map((item) => item.id)).toEqual(["second", "first"]);
 
+    const guestReorderResult = applyRoomMutation(
+      state,
+      {
+        type: "queue.reorder",
+        operationId: "guest-queue-reorder",
+        queueItemIds: ["first", "second"],
+        expectedRevision: 4,
+      },
+      "guest",
+      2_050,
+      () => "unused",
+    );
+    expect(guestReorderResult.error).toBeUndefined();
+    expect(state.queue.map((item) => item.id)).toEqual(["first", "second"]);
+
     const removeResult = applyRoomMutation(
       state,
       {
@@ -199,6 +215,41 @@ describe("party room mutations", () => {
     );
     expect(removeResult.error).toBeUndefined();
     expect(state.queue.map((item) => item.id)).toEqual(["first"]);
+  });
+
+  it("rejects guest queue reordering when guest queue additions are disabled", () => {
+    const state = createRoomState();
+    state.permissions.guestsCanAddToQueue = false;
+    state.queue = [
+      {
+        id: "first",
+        track: { videoId: "track-1" },
+        addedByParticipantId: "host",
+        addedAtMs: 1_000,
+      },
+      {
+        id: "second",
+        track: { videoId: "track-2" },
+        addedByParticipantId: "guest",
+        addedAtMs: 1_100,
+      },
+    ];
+
+    const result = applyRoomMutation(
+      state,
+      {
+        type: "queue.reorder",
+        operationId: "guest-queue-reorder",
+        queueItemIds: ["second", "first"],
+        expectedRevision: 4,
+      },
+      "guest",
+      2_000,
+      () => "unused",
+    );
+
+    expect(result.error?.code).toBe("forbidden");
+    expect(state.queue.map((item) => item.id)).toEqual(["first", "second"]);
   });
 
   it("advances the queue with a server timestamp", () => {
@@ -391,6 +442,42 @@ describe("party room mutations", () => {
     expect(state.participants.map((participant) => participant.participantId)).toEqual([
       "host",
       "active-guest",
+    ]);
+  });
+
+  it("removes a leaving guest immediately", () => {
+    const state = createRoomState();
+
+    const changed = removeParticipant(state, "guest");
+
+    expect(changed).toBe(true);
+    expect(state.participants.map((participant) => participant.participantId)).toEqual([
+      "host",
+    ]);
+  });
+
+  it("transfers host authority immediately when the host leaves", () => {
+    const state = createRoomState();
+    state.participants.push({
+      participantId: "later-guest",
+      displayName: "Later",
+      role: "guest",
+      syncStatus: "in_sync",
+      connectedAtMs: 300,
+      lastSeenAtMs: 300,
+    });
+
+    const changed = removeParticipant(state, "host", new Set(["later-guest"]));
+
+    expect(changed).toBe(true);
+    expect(state.hostParticipantId).toBe("later-guest");
+    expect(
+      state.participants.find((participant) => participant.participantId === "later-guest")
+        ?.role,
+    ).toBe("host");
+    expect(state.participants.map((participant) => participant.participantId)).toEqual([
+      "guest",
+      "later-guest",
     ]);
   });
 

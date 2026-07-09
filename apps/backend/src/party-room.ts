@@ -9,6 +9,7 @@ import {
 import {
   addParticipant,
   markParticipantDisconnected,
+  removeParticipant,
   removeInactiveParticipants,
   transferHost,
   upsertConnectedParticipant,
@@ -25,6 +26,7 @@ import {
   consumeConnectionTicket,
   createRoomAuth,
   issueConnectionTicket,
+  removeParticipantAuth,
   removeOrphanedParticipantTokens,
 } from "./domain/room-auth";
 import { RoomConnections } from "./domain/room-connections";
@@ -35,7 +37,7 @@ import { generateId, generateToken } from "./lib/ids";
 import { readPositiveInteger } from "./lib/config";
 import type { Env, RoomAuth } from "./types";
 
-const DEFAULT_HOST_RECONNECT_GRACE_MS = 30_000;
+const DEFAULT_HOST_RECONNECT_GRACE_MS = 5_000;
 const PARTICIPANT_RETENTION_MS = 5 * 60_000;
 const CONNECTION_TICKET_TTL_MS = 30_000;
 const DEFAULT_ROOM_MAX_AGE_MS = 24 * 60 * 60 * 1_000;
@@ -66,6 +68,9 @@ export class PartyRoom {
     }
     if (request.method === "POST" && url.pathname === "/ticket") {
       return this.createConnectionTicket(request);
+    }
+    if (request.method === "POST" && url.pathname === "/leave") {
+      return this.leave(request);
     }
     if (url.pathname.endsWith("/connect")) {
       return this.connect(request);
@@ -249,6 +254,47 @@ export class PartyRoom {
     return jsonResponse(response, { status: 201 });
   }
 
+  private async leave(request: Request): Promise<Response> {
+    if (!this.roomState || !this.roomAuth) {
+      return jsonResponse({ ok: true, alreadyExpired: true });
+    }
+
+    const body = await request.json<{
+      participantId: string;
+      participantToken: string;
+      nowMs: number;
+    }>();
+    const storedToken = this.roomAuth.participantTokens[body.participantId];
+    if (!storedToken || storedToken !== body.participantToken) {
+      return jsonResponse({ error: "Invalid participant token" }, { status: 401 });
+    }
+
+    const connectedParticipantIds = this.connections.participantIds();
+    connectedParticipantIds.delete(body.participantId);
+    const removed = removeParticipant(
+      this.roomState,
+      body.participantId,
+      connectedParticipantIds,
+    );
+    removeParticipantAuth(this.roomAuth, body.participantId);
+    this.connections.closeParticipant(body.participantId, 1000, "Participant left");
+
+    if (!removed) {
+      await this.persist();
+      return jsonResponse({ ok: true, alreadyLeft: true });
+    }
+
+    if (this.roomState.participants.length === 0) {
+      await this.expireRoom();
+      return jsonResponse({ ok: true });
+    }
+
+    this.roomState.lastActivityAtMs = body.nowMs;
+    await this.commitAndBroadcast();
+    await this.scheduleNextPresenceAlarm();
+    return jsonResponse({ ok: true });
+  }
+
   private async connect(request: Request): Promise<Response> {
     if (!this.roomState || !this.roomAuth) {
       return jsonResponse({ error: "Party has expired" }, { status: 410 });
@@ -330,6 +376,9 @@ export class PartyRoom {
       send: (message) => this.send(socket, message),
       persist: () => this.persist(),
       broadcast: () => this.broadcastSnapshot(),
+      connectedParticipantIds: () => this.connections.participantIds(),
+      closeParticipant: (participantId, code, reason) =>
+        this.connections.closeParticipant(participantId, code, reason),
       now: Date.now,
     });
     // Persist mutated per-connection rate-limit counters so they survive
@@ -340,6 +389,13 @@ export class PartyRoom {
   private async disconnect(socket: WebSocket): Promise<void> {
     const session = this.connections.meta(socket);
     if (!session || !this.roomState) return;
+    if (
+      !this.roomState.participants.some(
+        (participant) => participant.participantId === session.participantId,
+      )
+    ) {
+      return;
+    }
 
     if (this.connections.hasOtherParticipantSocket(session.participantId, socket)) {
       return;

@@ -6,6 +6,16 @@ import type {
 } from "@ytm-party/shared";
 import { apiUrl } from "./config";
 
+export class PartyApiError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = "PartyApiError";
+  }
+}
+
 export class PartyApi {
   async createRoom(
     displayName: string,
@@ -17,7 +27,10 @@ export class PartyApi {
       body: JSON.stringify({ displayName, initialPlayback }),
     });
     if (!response.ok) {
-      throw new Error(await readApiError(response, "Could not create party."));
+      throw new PartyApiError(
+        response.status,
+        await readApiError(response, "Could not create party."),
+      );
     }
     return response.json() as Promise<CreateRoomResponse>;
   }
@@ -29,7 +42,10 @@ export class PartyApi {
       body: JSON.stringify({ inviteCode, displayName }),
     });
     if (!response.ok) {
-      throw new Error(await readApiError(response, "Could not join party."));
+      throw new PartyApiError(
+        response.status,
+        await readApiError(response, "Could not join party."),
+      );
     }
     return response.json() as Promise<JoinRoomResponse>;
   }
@@ -56,9 +72,30 @@ export class PartyApi {
       if (response.status === 404 || response.status === 409 || response.status === 410) {
         throw new PartyExpiredError(message);
       }
-      throw new Error(message);
+      throw new PartyApiError(response.status, message);
     }
     return response.json() as Promise<ConnectionTicketResponse>;
+  }
+
+  async leaveRoom(
+    roomId: string,
+    participantId: string,
+    participantToken: string,
+  ): Promise<void> {
+    const response = await fetch(apiUrl(`/rooms/${encodeURIComponent(roomId)}/leave`), {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${participantToken}`,
+      },
+      body: JSON.stringify({ participantId }),
+    });
+    if (!response.ok) {
+      throw new PartyApiError(
+        response.status,
+        await readApiError(response, "Could not leave party."),
+      );
+    }
   }
 }
 

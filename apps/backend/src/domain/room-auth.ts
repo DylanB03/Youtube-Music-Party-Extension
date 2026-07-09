@@ -76,6 +76,13 @@ export function removeOrphanedParticipantTokens(
   }
 }
 
+export function removeParticipantAuth(auth: RoomAuth, participantId: string): void {
+  delete auth.participantTokens[participantId];
+  for (const [ticket, details] of Object.entries(auth.connectionTickets)) {
+    if (details.participantId === participantId) delete auth.connectionTickets[ticket];
+  }
+}
+
 function removeExpiredTickets(auth: RoomAuth, nowMs: number): void {
   for (const [ticket, details] of Object.entries(auth.connectionTickets)) {
     if (details.expiresAtMs < nowMs) delete auth.connectionTickets[ticket];

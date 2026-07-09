@@ -5,14 +5,16 @@ import type { PartyAction } from "./use-party-session";
 
 type QueueCardProps = {
   state: PartyRoomState | null;
-  isHost: boolean;
+  canReorder: boolean;
+  canRemove: boolean;
   pendingAction: string | null;
   act: PartyAction;
 };
 
 export function QueueCard({
   state,
-  isHost,
+  canReorder,
+  canRemove,
   pendingAction,
   act,
 }: QueueCardProps) {
@@ -37,7 +39,7 @@ export function QueueCard({
   }
 
   function allowDrop(event: DragEvent<HTMLLIElement>, itemId: string): void {
-    if (!isHost || pendingAction || draggedItemId === itemId) return;
+    if (!canReorder || pendingAction || draggedItemId === itemId) return;
     event.preventDefault();
     event.dataTransfer.dropEffect = "move";
     setDropTargetId(itemId);
@@ -62,7 +64,7 @@ export function QueueCard({
     itemId: string,
     index: number,
   ): void {
-    if (!state || pendingAction) return;
+    if (!state || !canReorder || pendingAction) return;
     const targetIndex =
       event.key === "ArrowUp"
         ? index - 1
@@ -90,7 +92,7 @@ export function QueueCard({
               onDrop={(event) => finishDrop(event, item.id)}
             >
               <div className="queue-item-main">
-                {isHost ? (
+                {canReorder ? (
                   <button
                     className="drag-handle"
                     draggable={!pendingAction}
@@ -116,7 +118,7 @@ export function QueueCard({
                   {item.track.artist ? <small>{item.track.artist}</small> : null}
                 </span>
               </div>
-              {isHost ? (
+              {canRemove ? (
                 <div className="queue-actions">
                   <button
                     disabled={Boolean(pendingAction)}

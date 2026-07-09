@@ -15,6 +15,7 @@ import {
   playbackKey,
 } from "./playback-policy";
 import { isNearTrackEnd, looksLikeNaturalTrackAdvance } from "./youtube-music/playback-transition";
+import { PartyApiError } from "./party-api";
 import type { PlaybackApplicationResult } from "./playback-application";
 import { PartyMutationCoordinator } from "./party-mutation-coordinator";
 import {
@@ -36,6 +37,11 @@ type PartyApiPort = {
     initialPlayback: PartyPlaybackState,
   ): Promise<CreateRoomResponse>;
   joinRoom(inviteCode: string, displayName: string): Promise<JoinRoomResponse>;
+  leaveRoom(
+    roomId: string,
+    participantId: string,
+    participantToken: string,
+  ): Promise<void>;
 };
 type SessionStoragePort = {
   load(): Promise<StoredSession | null>;
@@ -129,6 +135,10 @@ export class PartyController {
   }
 
   async leaveParty(): Promise<SessionView> {
+    const session = this.session;
+    if (session) {
+      await this.leaveRemoteParty(session);
+    }
     this.resetPlaybackRuntimeState();
     this.session?.client.disconnect();
     this.session = null;
@@ -138,6 +148,54 @@ export class PartyController {
     await this.storage.clear();
     this.publishState();
     return this.getView();
+  }
+
+  private async leaveRemoteParty(session: ActiveSession): Promise<void> {
+    let httpError: unknown;
+
+    try {
+      await this.api.leaveRoom(
+        session.roomId,
+        session.participantId,
+        session.participantToken,
+      );
+      return;
+    } catch (error) {
+      httpError = error;
+      if (error instanceof PartyApiError && error.status === 404) {
+        const message =
+          "This backend does not support instant leave yet. Deploy the latest backend, then try again.";
+        session.lastError = message;
+        this.publishState();
+        throw new Error(message);
+      }
+    }
+
+    try {
+      if (!session.state) throw new Error("Room snapshot is not ready yet.");
+      const result = await this.mutations.execute(
+        session.client,
+        this.requireRevision(),
+        (operationId, expectedRevision) => ({
+          type: "participant.leave",
+          operationId,
+          expectedRevision,
+        }),
+      );
+      if (!result.accepted) {
+        throw new Error(result.error?.message ?? "The room rejected the leave request.");
+      }
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : httpError instanceof Error
+            ? httpError.message
+            : "Could not leave party.";
+      session.lastError = message;
+      this.publishState();
+      throw new Error(message);
+    }
   }
 
   async joinPlayback(): Promise<SessionView> {
@@ -157,6 +215,9 @@ export class PartyController {
 
   async resumePlayback(): Promise<SessionView> {
     const session = this.requireSession();
+    if (session.state?.hostParticipantId !== session.participantId) {
+      return this.joinPlayback();
+    }
     if (!session.state?.queue.length) {
       session.lastError = "Add a song to the queue, then resume.";
       this.publishState();

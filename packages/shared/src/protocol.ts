@@ -164,6 +164,11 @@ export type ClientMessage =
       syncStatus: SyncStatus;
     }
   | {
+      type: "participant.leave";
+      operationId: string;
+      expectedRevision: number;
+    }
+  | {
       type: "permissions.update";
       operationId: string;
       permissions: RoomPermissions;
@@ -375,6 +380,9 @@ export function isClientMessage(value: unknown): value is ClientMessage {
 
     case "participant.status":
       return isSyncStatus(message.syncStatus);
+
+    case "participant.leave":
+      return isOperationId(message.operationId) && isRevision(message.expectedRevision);
 
     case "permissions.update":
       return (

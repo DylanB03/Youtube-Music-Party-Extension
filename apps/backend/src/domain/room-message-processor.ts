@@ -10,7 +10,10 @@ import {
   consumeMessageAllowance,
   messageSizeBytes,
 } from "./connection-guard";
-import { rememberOperationResult } from "./room-auth";
+import {
+  removeParticipantAuth,
+  rememberOperationResult,
+} from "./room-auth";
 import type { RoomLimits } from "./room-limits";
 import { applyRoomMutation } from "./room-state";
 
@@ -24,6 +27,8 @@ type RoomMessageContext = {
   send: (message: ServerMessage) => void;
   persist: () => Promise<void>;
   broadcast: () => void;
+  connectedParticipantIds: () => Set<string>;
+  closeParticipant: (participantId: string, code: number, reason: string) => void;
   now: () => number;
 };
 
@@ -37,6 +42,8 @@ export async function processRoomMessage({
   send,
   persist,
   broadcast,
+  connectedParticipantIds,
+  closeParticipant,
   now,
 }: RoomMessageContext): Promise<void> {
   if (messageSizeBytes(raw) > limits.maxMessageBytes) {
@@ -121,6 +128,7 @@ export async function processRoomMessage({
     eventTimeMs,
     () => generateId("queue"),
     limits,
+    connectedParticipantIds(),
   );
   if (result.error) {
     const operationResult: Extract<
@@ -158,9 +166,15 @@ export async function processRoomMessage({
     revision: room.revision,
   };
   rememberOperationResult(auth, operationResult);
+  if (message.type === "participant.leave") {
+    removeParticipantAuth(auth, session.participantId);
+  }
   await persist();
   broadcast();
   send(operationResult);
+  if (message.type === "participant.leave") {
+    closeParticipant(session.participantId, 1000, "Participant left");
+  }
 }
 
 function parseClientMessage(raw: unknown): ClientMessage | null {

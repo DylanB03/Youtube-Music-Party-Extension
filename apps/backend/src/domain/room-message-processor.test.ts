@@ -70,8 +70,15 @@ async function dispatch(
   auth: RoomAuth,
   participantId: string,
   message: ClientMessage,
-): Promise<{ sent: ServerMessage[]; broadcasts: number; persists: number }> {
+  connectedIds: Set<string> = new Set(["host", "guest"]),
+): Promise<{
+  sent: ServerMessage[];
+  broadcasts: number;
+  closedParticipants: string[];
+  persists: number;
+}> {
   const sent: ServerMessage[] = [];
+  const closedParticipants: string[] = [];
   let broadcasts = 0;
   let persists = 0;
   const socket = { close() {} } as unknown as WebSocket;
@@ -89,9 +96,13 @@ async function dispatch(
     broadcast: () => {
       broadcasts += 1;
     },
+    connectedParticipantIds: () => connectedIds,
+    closeParticipant: (closedParticipantId) => {
+      closedParticipants.push(closedParticipantId);
+    },
     now: () => 5_000,
   });
-  return { sent, broadcasts, persists };
+  return { sent, broadcasts, closedParticipants, persists };
 }
 
 describe("room message processor", () => {
@@ -148,5 +159,40 @@ describe("room message processor", () => {
 
     expect(room.revision).toBe(8);
     expect(room.queue).toHaveLength(1);
+  });
+
+  it("removes a leaving host, transfers host, and closes the leaving participant", async () => {
+    const room = createRoom();
+    const auth = createAuth();
+
+    const { sent, broadcasts, closedParticipants, persists } = await dispatch(
+      room,
+      auth,
+      "host",
+      {
+        type: "participant.leave",
+        operationId: "host-leave",
+        expectedRevision: 7,
+      },
+      new Set(["host", "guest"]),
+    );
+
+    expect(room.revision).toBe(8);
+    expect(room.hostParticipantId).toBe("guest");
+    expect(room.participants.map((participant) => participant.participantId)).toEqual([
+      "guest",
+    ]);
+    expect(room.participants[0]?.role).toBe("host");
+    expect(auth.participantTokens.host).toBeUndefined();
+    expect(auth.participantTokens.guest).toBe("guest-token");
+    expect(broadcasts).toBe(1);
+    expect(persists).toBe(1);
+    expect(sent).toContainEqual({
+      type: "operation.result",
+      operationId: "host-leave",
+      accepted: true,
+      revision: 8,
+    });
+    expect(closedParticipants).toEqual(["host"]);
   });
 });

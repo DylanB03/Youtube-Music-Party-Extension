@@ -17,11 +17,13 @@
     "dev:extension": "npm --workspace apps/extension run dev",
     "build:backend": "npm --workspace apps/backend run build",
     "build:extension": "npm --workspace apps/extension run build",
+    "capture:store-screenshots": "node scripts/capture-store-screenshots.mjs",
     "verify:extension": "node scripts/verify-extension-package.mjs",
     "release:extension": "npm --workspace apps/extension run zip"
   },
   "devDependencies": {
     "@playwright/test": "^1.53.2",
+    "sharp": "^0.34.5",
     "typescript": "^5.8.3",
     "vitest": "^4.1.8"
   }

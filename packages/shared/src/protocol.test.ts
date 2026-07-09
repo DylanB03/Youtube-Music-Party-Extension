@@ -47,6 +47,16 @@ describe("sync status validation", () => {
 });
 
 describe("client message validation", () => {
+  it("accepts a participant leave mutation", () => {
+    expect(
+      isClientMessage({
+        type: "participant.leave",
+        operationId: "op-leave",
+        expectedRevision: 4,
+      }),
+    ).toBe(true);
+  });
+
   it("accepts a host requeue mutation", () => {
     expect(
       isClientMessage({

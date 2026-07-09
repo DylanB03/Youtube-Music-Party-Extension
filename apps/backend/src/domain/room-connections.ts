@@ -72,6 +72,16 @@ export class RoomConnections {
     }
   }
 
+  closeParticipant(participantId: string, code: number, reason: string): void {
+    for (const socket of this.state.getWebSockets(participantId)) {
+      try {
+        socket.close(code, reason);
+      } catch {
+        // Already closing.
+      }
+    }
+  }
+
   private deliver(socket: WebSocket, serialized: string): void {
     try {
       socket.send(serialized);

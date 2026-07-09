@@ -7,6 +7,7 @@ import type {
   Track,
 } from "@ytm-party/shared";
 import { PartyController } from "./party-controller";
+import { PartyApiError } from "./party-api";
 import type {
   ConnectionState,
   MutationMessage,
@@ -19,6 +20,8 @@ import type {
 class FakeConnection implements PartyConnection {
   clockOffsetMs = 0;
   sent: ClientMessage[] = [];
+  disconnects = 0;
+  failOperations = false;
   snapshotOnSkip: PartyRoomState | null = null;
   snapshotOnHostRequeue: PartyRoomState | null = null;
   private snapshotListener: ((state: PartyRoomState) => void) | null = null;
@@ -26,7 +29,9 @@ class FakeConnection implements PartyConnection {
 
   connect(): void {}
 
-  disconnect(): void {}
+  disconnect(): void {
+    this.disconnects += 1;
+  }
 
   onSnapshot(listener: (state: PartyRoomState) => void): () => void {
     this.snapshotListener = listener;
@@ -52,6 +57,7 @@ class FakeConnection implements PartyConnection {
   }
 
   async sendOperation(message: MutationMessage): Promise<OperationResult> {
+    if (this.failOperations) throw new Error("Party operation failed");
     this.sent.push(message);
     // Mirror the backend, which broadcasts the new snapshot before the
     // operation result so the client has fresh canonical state when the
@@ -187,6 +193,9 @@ async function createGuestController(): Promise<{
       async joinRoom() {
         throw new Error("Not used");
       },
+      async leaveRoom() {
+        throw new Error("Not used");
+      },
     },
     new FakeStorage(credentials),
     tabs,
@@ -219,6 +228,9 @@ async function createHostController(): Promise<{
         throw new Error("Not used");
       },
       async joinRoom() {
+        throw new Error("Not used");
+      },
+      async leaveRoom() {
         throw new Error("Not used");
       },
     },
@@ -273,6 +285,175 @@ describe("party controller orchestration", () => {
         expectedRevision: 2,
       },
     ]);
+  });
+
+  it("notifies the backend leave endpoint before clearing a local leave", async () => {
+    const credentials: StoredSession = {
+      roomId: "room",
+      participantId: "guest",
+      participantToken: "token",
+      displayName: "Guest",
+      localSyncStatus: "in_sync",
+    };
+    const connection = new FakeConnection();
+    const storage = new FakeStorage(credentials);
+    const leaveCalls: Array<Pick<StoredSession, "roomId" | "participantId" | "participantToken">> = [];
+    const controller = new PartyController(
+      {
+        async createRoom() {
+          throw new Error("Not used");
+        },
+        async joinRoom() {
+          throw new Error("Not used");
+        },
+        async leaveRoom(roomId, participantId, participantToken) {
+          leaveCalls.push({ roomId, participantId, participantToken });
+        },
+      },
+      storage,
+      new FakeTabs(),
+      () => connection,
+      () => undefined,
+    );
+    await controller.initialize();
+    connection.emitSnapshot(roomState());
+
+    const view = await controller.leaveParty();
+
+    expect(leaveCalls).toEqual([
+      {
+        roomId: "room",
+        participantId: "guest",
+        participantToken: "token",
+      },
+    ]);
+    expect(connection.sent).not.toContainEqual(
+      expect.objectContaining({ type: "participant.leave" }),
+    );
+    expect(connection.disconnects).toBe(1);
+    expect(storage.saved).toBeNull();
+    expect(view.localSyncStatus).toBe("not_joined");
+  });
+
+  it("falls back to in-room leave if the HTTP leave endpoint cannot be reached", async () => {
+    const credentials: StoredSession = {
+      roomId: "room",
+      participantId: "guest",
+      participantToken: "token",
+      displayName: "Guest",
+      localSyncStatus: "in_sync",
+    };
+    const connection = new FakeConnection();
+    const storage = new FakeStorage(credentials);
+    const controller = new PartyController(
+      {
+        async createRoom() {
+          throw new Error("Not used");
+        },
+        async joinRoom() {
+          throw new Error("Not used");
+        },
+        async leaveRoom() {
+          throw new Error("Network failed");
+        },
+      },
+      storage,
+      new FakeTabs(),
+      () => connection,
+      () => undefined,
+    );
+    await controller.initialize();
+    connection.emitSnapshot(roomState());
+
+    await controller.leaveParty();
+
+    expect(connection.sent).toContainEqual({
+      type: "participant.leave",
+      operationId: expect.any(String),
+      expectedRevision: 2,
+    });
+    expect(storage.saved).toBeNull();
+  });
+
+  it("does not send a websocket leave to a backend missing the leave endpoint", async () => {
+    const credentials: StoredSession = {
+      roomId: "room",
+      participantId: "guest",
+      participantToken: "token",
+      displayName: "Guest",
+      localSyncStatus: "in_sync",
+    };
+    const connection = new FakeConnection();
+    const storage = new FakeStorage(credentials);
+    const controller = new PartyController(
+      {
+        async createRoom() {
+          throw new Error("Not used");
+        },
+        async joinRoom() {
+          throw new Error("Not used");
+        },
+        async leaveRoom() {
+          throw new PartyApiError(404, "Not found");
+        },
+      },
+      storage,
+      new FakeTabs(),
+      () => connection,
+      () => undefined,
+    );
+    await controller.initialize();
+    connection.emitSnapshot(roomState());
+
+    await expect(controller.leaveParty()).rejects.toThrow(
+      "This backend does not support instant leave yet",
+    );
+
+    expect(connection.sent).not.toContainEqual(
+      expect.objectContaining({ type: "participant.leave" }),
+    );
+    expect(storage.saved).toEqual(credentials);
+  });
+
+  it("lets a guest Resume button rejoin playback instead of skipping the queue", async () => {
+    const credentials: StoredSession = {
+      roomId: "room",
+      participantId: "guest",
+      participantToken: "token",
+      displayName: "Guest",
+      localSyncStatus: "ready_to_resume",
+    };
+    const connection = new FakeConnection();
+    const tabs = new FakeTabs();
+    const controller = new PartyController(
+      {
+        async createRoom() {
+          throw new Error("Not used");
+        },
+        async joinRoom() {
+          throw new Error("Not used");
+        },
+        async leaveRoom() {
+          throw new Error("Not used");
+        },
+      },
+      new FakeStorage(credentials),
+      tabs,
+      () => connection,
+      () => undefined,
+    );
+    await controller.initialize();
+    connection.emitSnapshot(roomState());
+    await flushControllerWork();
+    connection.sent = [];
+
+    await controller.resumePlayback();
+
+    expect(tabs.applied.at(-1)?.track?.videoId).toBe("current-track");
+    expect(
+      connection.sent.filter((message) => message.type === "playback.skip"),
+    ).toHaveLength(0);
+    expect(controller.getView().localSyncStatus).toBe("in_sync");
   });
 
   it("advances only once for duplicate host ended events", async () => {
@@ -488,6 +669,9 @@ describe("party controller orchestration", () => {
           };
         },
         async joinRoom() {
+          throw new Error("Not used");
+        },
+        async leaveRoom() {
           throw new Error("Not used");
         },
       },
@@ -1099,6 +1283,9 @@ describe("party controller orchestration", () => {
           };
         },
         async joinRoom() {
+          throw new Error("Not used");
+        },
+        async leaveRoom() {
           throw new Error("Not used");
         },
       },

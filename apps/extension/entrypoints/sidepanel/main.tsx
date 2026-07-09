@@ -21,6 +21,8 @@ function App() {
   const { pendingInvite, clearPendingInvite } = usePendingInvite();
   const isHost = view.state?.hostParticipantId === view.participantId;
   const canSkip = isHost || view.state?.permissions.guestsCanSkip === true;
+  const canReorderQueue =
+    isHost || view.state?.permissions.guestsCanAddToQueue === true;
 
   async function updatePermissions(permissions: RoomPermissions) {
     await act(
@@ -76,8 +78,8 @@ function App() {
       ) : null}
       {view.state?.hostDisconnectedAtMs ? (
         <p className="notice warning" aria-live="polite">
-          Host disconnected. The party is waiting briefly before transferring host
-          controls.
+          Host disconnected. Host controls will transfer shortly if they do not
+          reconnect.
         </p>
       ) : null}
 
@@ -205,7 +207,8 @@ function App() {
 
           <QueueCard
             state={view.state}
-            isHost={isHost}
+            canReorder={canReorderQueue}
+            canRemove={Boolean(isHost)}
             pendingAction={pendingAction}
             act={act}
           />

@@ -27,6 +27,7 @@ export function applyRoomMutation(
   nowMs: number,
   createQueueId: QueueIdFactory,
   limits?: Pick<RoomLimits, "maxQueueItems">,
+  connectedParticipantIds: Set<string> = new Set(),
 ): RoomMutationResult {
   touchParticipant(state, participantId, nowMs);
 
@@ -45,6 +46,14 @@ export function applyRoomMutation(
   }
 
   switch (message.type) {
+    case "participant.leave": {
+      const remainingConnectedIds = new Set(connectedParticipantIds);
+      remainingConnectedIds.delete(participantId);
+      return {
+        changed: removeParticipant(state, participantId, remainingConnectedIds),
+      };
+    }
+
     case "permissions.update": {
       const hostError = validateHost(state, participantId);
       if (hostError) return { changed: false, error: hostError };
@@ -152,8 +161,15 @@ export function applyRoomMutation(
     }
 
     case "queue.reorder": {
-      const hostError = validateHost(state, participantId);
-      if (hostError) return { changed: false, error: hostError };
+      if (!canReorderQueue(state, participantId)) {
+        return {
+          changed: false,
+          error: {
+            code: "forbidden",
+            message: "Guests cannot reorder songs unless the host enables guest queue additions.",
+          },
+        };
+      }
       reorderQueue(state, message.queueItemIds);
       return { changed: true };
     }
@@ -233,6 +249,39 @@ export function addParticipant(
   state.participants.push(participant);
 }
 
+export function removeParticipant(
+  state: PartyRoomState,
+  participantId: string,
+  connectedParticipantIds: Set<string> = new Set(),
+): boolean {
+  const previousLength = state.participants.length;
+  state.participants = state.participants.filter(
+    (participant) => participant.participantId !== participantId,
+  );
+  if (state.participants.length === previousLength) return false;
+
+  if (state.hostParticipantId === participantId) {
+    const replacement =
+      state.participants
+        .filter((participant) => connectedParticipantIds.has(participant.participantId))
+        .sort((left, right) => left.connectedAtMs - right.connectedAtMs)[0] ??
+      state.participants
+        .slice()
+        .sort((left, right) => left.connectedAtMs - right.connectedAtMs)[0];
+
+    if (replacement) {
+      state.hostParticipantId = replacement.participantId;
+      delete state.hostDisconnectedAtMs;
+    }
+  }
+
+  state.participants = state.participants.map((participant) => ({
+    ...participant,
+    role: participant.participantId === state.hostParticipantId ? "host" : "guest",
+  }));
+  return true;
+}
+
 export function removeInactiveParticipants(
   state: PartyRoomState,
   connectedParticipantIds: Set<string>,
@@ -276,6 +325,10 @@ function canAddToQueue(state: PartyRoomState, participantId: string): boolean {
     participantId === state.hostParticipantId ||
     state.permissions.guestsCanAddToQueue
   );
+}
+
+function canReorderQueue(state: PartyRoomState, participantId: string): boolean {
+  return canAddToQueue(state, participantId);
 }
 
 function canSkip(state: PartyRoomState, participantId: string): boolean {
