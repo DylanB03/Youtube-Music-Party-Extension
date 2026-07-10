@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   isClientMessage,
+  isRoomPermissions,
   isServerMessage,
   isSyncStatus,
   isTrack,
+  normalizeRoomPermissions,
   trackFieldLimits,
 } from "./protocol";
 
@@ -47,6 +49,28 @@ describe("sync status validation", () => {
 });
 
 describe("client message validation", () => {
+  it("accepts old permission payloads and normalizes the newer delete permission", () => {
+    const permissions = {
+      guestsCanSkip: true,
+      guestsCanAddToQueue: false,
+    };
+
+    expect(isRoomPermissions(permissions)).toBe(true);
+    expect(normalizeRoomPermissions(permissions)).toEqual({
+      guestsCanSkip: true,
+      guestsCanAddToQueue: false,
+      guestsCanRemoveFromQueue: false,
+    });
+    expect(
+      isClientMessage({
+        type: "permissions.update",
+        operationId: "op-permissions",
+        permissions,
+        expectedRevision: 4,
+      }),
+    ).toBe(true);
+  });
+
   it("accepts a participant leave mutation", () => {
     expect(
       isClientMessage({
@@ -102,6 +126,7 @@ describe("server message validation", () => {
           permissions: {
             guestsCanSkip: false,
             guestsCanAddToQueue: true,
+            guestsCanRemoveFromQueue: false,
           },
           playback: {
             track: null,

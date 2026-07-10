@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   currentPlaybackPositionSeconds,
   estimateClockOffsetMs,
+  isWithinPlaybackDrift,
   shouldCorrectDrift,
   shouldMarkOutOfSync,
 } from "./sync";
@@ -34,6 +35,11 @@ describe("playback synchronization", () => {
     expect(shouldCorrectDrift(12, playback, 3_000)).toBe(false);
     expect(shouldCorrectDrift(12.5, playback, 3_000)).toBe(true);
     expect(shouldMarkOutOfSync(15, playback, 3_000)).toBe(true);
+  });
+
+  it("checks playback against an explicit drift tolerance", () => {
+    expect(isWithinPlaybackDrift(12.4, playback, 3_000, 0.5)).toBe(true);
+    expect(isWithinPlaybackDrift(12.6, playback, 3_000, 0.5)).toBe(false);
   });
 
   it("estimates server clock offset using half the round trip", () => {

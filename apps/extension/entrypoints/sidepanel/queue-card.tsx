@@ -121,7 +121,14 @@ export function QueueCard({
               {canRemove ? (
                 <div className="queue-actions">
                   <button
+                    className="icon-button danger"
                     disabled={Boolean(pendingAction)}
+                    aria-label={`Remove ${item.track.title ?? item.track.videoId} from queue`}
+                    title={
+                      pendingAction === `queue-remove:${item.id}`
+                        ? "Removing..."
+                        : "Remove from queue"
+                    }
                     onClick={() =>
                       act(
                         `queue-remove:${item.id}`,
@@ -130,9 +137,11 @@ export function QueueCard({
                       )
                     }
                   >
-                    {pendingAction === `queue-remove:${item.id}`
-                      ? "Removing..."
-                      : "Remove"}
+                    <svg aria-hidden="true" viewBox="0 0 24 24">
+                      <path
+                        d="M9 3.75A1.75 1.75 0 0 1 10.75 2h2.5A1.75 1.75 0 0 1 15 3.75V5h4.25a.75.75 0 0 1 0 1.5h-.8l-.74 12.2A3.5 3.5 0 0 1 14.22 22H9.78a3.5 3.5 0 0 1-3.49-3.3L5.55 6.5h-.8a.75.75 0 0 1 0-1.5H9V3.75Zm1.5 0V5h3V3.75a.25.25 0 0 0-.25-.25h-2.5a.25.25 0 0 0-.25.25Zm-3.44 2.75.73 12.1a2 2 0 0 0 2 1.9h4.42a2 2 0 0 0 2-1.9l.73-12.1H7.06ZM10.25 9a.75.75 0 0 1 .75.75v7a.75.75 0 0 1-1.5 0v-7a.75.75 0 0 1 .75-.75Zm3.5 0a.75.75 0 0 1 .75.75v7a.75.75 0 0 1-1.5 0v-7a.75.75 0 0 1 .75-.75Z"
+                      />
+                    </svg>
                   </button>
                 </div>
               ) : null}

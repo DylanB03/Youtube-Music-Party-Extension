@@ -13,7 +13,14 @@ export type SyncStatus =
 export type RoomPermissions = {
   guestsCanSkip: boolean;
   guestsCanAddToQueue: boolean;
+  guestsCanRemoveFromQueue: boolean;
 };
+
+type LegacyRoomPermissions = Omit<
+  RoomPermissions,
+  "guestsCanRemoveFromQueue"
+> &
+  Partial<Pick<RoomPermissions, "guestsCanRemoveFromQueue">>;
 
 export type Track = {
   videoId: string;
@@ -336,10 +343,12 @@ export function isTrack(value: unknown): value is Track {
 
 export function isRoomPermissions(value: unknown): value is RoomPermissions {
   if (!value || typeof value !== "object") return false;
-  const permissions = value as RoomPermissions;
+  const permissions = value as LegacyRoomPermissions;
   return (
     typeof permissions.guestsCanSkip === "boolean" &&
-    typeof permissions.guestsCanAddToQueue === "boolean"
+    typeof permissions.guestsCanAddToQueue === "boolean" &&
+    (permissions.guestsCanRemoveFromQueue === undefined ||
+      typeof permissions.guestsCanRemoveFromQueue === "boolean")
   );
 }
 
@@ -472,6 +481,16 @@ export function defaultPermissions(): RoomPermissions {
   return {
     guestsCanSkip: false,
     guestsCanAddToQueue: true,
+    guestsCanRemoveFromQueue: false,
+  };
+}
+
+export function normalizeRoomPermissions(
+  permissions: LegacyRoomPermissions,
+): RoomPermissions {
+  return {
+    ...defaultPermissions(),
+    ...permissions,
   };
 }
 

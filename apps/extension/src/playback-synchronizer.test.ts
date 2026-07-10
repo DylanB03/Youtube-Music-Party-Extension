@@ -11,6 +11,7 @@ class VerificationTabs {
   applyCount = 0;
   throwAfterApply = false;
   acceptPlayback = true;
+  positionOffsetSeconds = 0;
   local: LocalPlaybackState = {
     track: { videoId: "wrong-track" },
     paused: false,
@@ -28,7 +29,7 @@ class VerificationTabs {
       this.local = {
         track: playback.track,
         paused: playback.paused,
-        positionSeconds: playback.positionSeconds,
+        positionSeconds: playback.positionSeconds + this.positionOffsetSeconds,
         buffering: false,
       };
     }
@@ -46,6 +47,7 @@ function activeSession(playback: PartyPlaybackState): ActiveSession {
     permissions: {
       guestsCanSkip: true,
       guestsCanAddToQueue: true,
+      guestsCanRemoveFromQueue: false,
     },
     playback,
     queue: [],
@@ -103,5 +105,17 @@ describe("PlaybackSynchronizer application verification", () => {
       "track_unavailable",
     );
     expect(tabs.local.track?.videoId).toBe("wrong-track");
+  });
+
+  it("rejects a correction that lands on the right track but remains audibly off", async () => {
+    const tabs = new VerificationTabs();
+    tabs.positionOffsetSeconds = 1;
+    const synchronizer = new PlaybackSynchronizer(tabs);
+
+    await expect(synchronizer.apply(activeSession(canonicalPlayback()))).resolves.toBe(
+      "out_of_sync",
+    );
+    expect(tabs.applyCount).toBe(2);
+    expect(tabs.local.track?.videoId).toBe("canonical-track");
   });
 });

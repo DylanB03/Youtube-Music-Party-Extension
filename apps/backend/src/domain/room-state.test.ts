@@ -17,6 +17,7 @@ function createRoomState(): PartyRoomState {
     permissions: {
       guestsCanSkip: false,
       guestsCanAddToQueue: true,
+      guestsCanRemoveFromQueue: false,
     },
     playback: {
       track: { videoId: "playing" },
@@ -123,6 +124,7 @@ describe("party room mutations", () => {
         permissions: {
           guestsCanSkip: true,
           guestsCanAddToQueue: false,
+          guestsCanRemoveFromQueue: false,
         },
         expectedRevision: 4,
       },
@@ -140,6 +142,7 @@ describe("party room mutations", () => {
         permissions: {
           guestsCanSkip: true,
           guestsCanAddToQueue: false,
+          guestsCanRemoveFromQueue: true,
         },
         expectedRevision: 4,
       },
@@ -151,6 +154,7 @@ describe("party room mutations", () => {
     expect(state.permissions).toEqual({
       guestsCanSkip: true,
       guestsCanAddToQueue: false,
+      guestsCanRemoveFromQueue: true,
     });
   });
 
@@ -250,6 +254,69 @@ describe("party room mutations", () => {
 
     expect(result.error?.code).toBe("forbidden");
     expect(state.queue.map((item) => item.id)).toEqual(["first", "second"]);
+  });
+
+  it("allows guests to remove queue items when guest removals are enabled", () => {
+    const state = createRoomState();
+    state.permissions.guestsCanRemoveFromQueue = true;
+    state.queue = [
+      {
+        id: "first",
+        track: { videoId: "track-1" },
+        addedByParticipantId: "host",
+        addedAtMs: 1_000,
+      },
+      {
+        id: "second",
+        track: { videoId: "track-2" },
+        addedByParticipantId: "guest",
+        addedAtMs: 1_100,
+      },
+    ];
+
+    const result = applyRoomMutation(
+      state,
+      {
+        type: "queue.remove",
+        operationId: "guest-queue-remove",
+        queueItemId: "first",
+        expectedRevision: 4,
+      },
+      "guest",
+      2_000,
+      () => "unused",
+    );
+
+    expect(result.error).toBeUndefined();
+    expect(state.queue.map((item) => item.id)).toEqual(["second"]);
+  });
+
+  it("rejects guest queue removals when guest removals are disabled", () => {
+    const state = createRoomState();
+    state.queue = [
+      {
+        id: "first",
+        track: { videoId: "track-1" },
+        addedByParticipantId: "host",
+        addedAtMs: 1_000,
+      },
+    ];
+
+    const result = applyRoomMutation(
+      state,
+      {
+        type: "queue.remove",
+        operationId: "guest-queue-remove",
+        queueItemId: "first",
+        expectedRevision: 4,
+      },
+      "guest",
+      2_000,
+      () => "unused",
+    );
+
+    expect(result.error?.code).toBe("forbidden");
+    expect(state.queue.map((item) => item.id)).toEqual(["first"]);
   });
 
   it("advances the queue with a server timestamp", () => {

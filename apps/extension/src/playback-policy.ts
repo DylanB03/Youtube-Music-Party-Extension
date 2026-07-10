@@ -3,7 +3,6 @@ import {
   type LocalPlaybackState,
   type PartyPlaybackState,
   shouldCorrectDrift,
-  shouldMarkOutOfSync,
 } from "@ytm-party/shared";
 
 export type GuestPlaybackDecision =
@@ -17,26 +16,35 @@ export function decideGuestPlaybackAction(
   canonical: PartyPlaybackState,
   nowMs: number,
 ): GuestPlaybackDecision {
+  if (event.playback.interruption === "advertisement") {
+    return "ignore";
+  }
   if (event.playback.interruption === "unavailable") {
     return "track_unavailable";
   }
   if (event.playback.track?.videoId !== canonical.track?.videoId) {
     return "out_of_sync";
   }
+  if (event.playback.buffering) {
+    return "ignore";
+  }
+  if (event.type === "local.play" && canonical.paused) {
+    return "out_of_sync";
+  }
   if (
-    event.type === "local.play" ||
     event.type === "local.pause" ||
     event.type === "local.seek" ||
-    event.type === "local.track_changed" ||
     event.type === "local.interruption"
   ) {
     return "out_of_sync";
   }
-  if (event.type !== "local.progress" && event.type !== "local.buffering") {
+  if (
+    event.type !== "local.progress" &&
+    event.type !== "local.buffering" &&
+    event.type !== "local.play" &&
+    event.type !== "local.track_changed"
+  ) {
     return "ignore";
-  }
-  if (shouldMarkOutOfSync(event.playback.positionSeconds, canonical, nowMs)) {
-    return "out_of_sync";
   }
   if (shouldCorrectDrift(event.playback.positionSeconds, canonical, nowMs)) {
     return "correct_drift";
@@ -49,6 +57,7 @@ export function canonicalPlaybackNeedsApplication(
   canonical: PartyPlaybackState,
   nowMs: number,
 ): boolean {
+  if (local.interruption === "advertisement") return false;
   const trackChanged = local.track?.videoId !== canonical.track?.videoId;
   const pauseChanged = local.paused !== canonical.paused;
   const drifted = shouldCorrectDrift(local.positionSeconds, canonical, nowMs);

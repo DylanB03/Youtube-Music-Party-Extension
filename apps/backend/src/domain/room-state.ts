@@ -4,6 +4,7 @@ import {
   type PartyRoomState,
   type QueueItem,
   type Track,
+  normalizeRoomPermissions,
 } from "@ytm-party/shared";
 import type { RoomLimits } from "./room-limits";
 
@@ -57,7 +58,7 @@ export function applyRoomMutation(
     case "permissions.update": {
       const hostError = validateHost(state, participantId);
       if (hostError) return { changed: false, error: hostError };
-      state.permissions = message.permissions;
+      state.permissions = normalizeRoomPermissions(message.permissions);
       return { changed: true };
     }
 
@@ -154,8 +155,16 @@ export function applyRoomMutation(
     }
 
     case "queue.remove": {
-      const hostError = validateHost(state, participantId);
-      if (hostError) return { changed: false, error: hostError };
+      if (!canRemoveFromQueue(state, participantId)) {
+        return {
+          changed: false,
+          error: {
+            code: "forbidden",
+            message:
+              "Guests cannot remove songs unless the host enables guest queue removals.",
+          },
+        };
+      }
       state.queue = state.queue.filter((item) => item.id !== message.queueItemId);
       return { changed: true };
     }
@@ -329,6 +338,13 @@ function canAddToQueue(state: PartyRoomState, participantId: string): boolean {
 
 function canReorderQueue(state: PartyRoomState, participantId: string): boolean {
   return canAddToQueue(state, participantId);
+}
+
+function canRemoveFromQueue(state: PartyRoomState, participantId: string): boolean {
+  return (
+    participantId === state.hostParticipantId ||
+    state.permissions.guestsCanRemoveFromQueue
+  );
 }
 
 function canSkip(state: PartyRoomState, participantId: string): boolean {

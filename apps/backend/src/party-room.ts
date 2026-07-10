@@ -5,6 +5,7 @@ import {
   type PartyRoomState,
   type ServerMessage,
   defaultPermissions,
+  normalizeRoomPermissions,
 } from "@ytm-party/shared";
 import {
   addParticipant,
@@ -116,6 +117,11 @@ export class PartyRoom {
     if (this.loaded) return;
     this.roomState = (await this.state.storage.get<PartyRoomState>("roomState")) ?? null;
     this.roomAuth = (await this.state.storage.get<RoomAuth>("roomAuth")) ?? null;
+    if (this.roomState) {
+      this.roomState.permissions = normalizeRoomPermissions(
+        this.roomState.permissions,
+      );
+    }
     if (this.roomAuth && !this.roomAuth.operationResults) {
       this.roomAuth.operationResults = {};
     }

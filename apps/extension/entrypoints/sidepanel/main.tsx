@@ -23,6 +23,8 @@ function App() {
   const canSkip = isHost || view.state?.permissions.guestsCanSkip === true;
   const canReorderQueue =
     isHost || view.state?.permissions.guestsCanAddToQueue === true;
+  const canRemoveFromQueue =
+    isHost || view.state?.permissions.guestsCanRemoveFromQueue === true;
 
   async function updatePermissions(permissions: RoomPermissions) {
     await act(
@@ -201,6 +203,17 @@ function App() {
                     })
                   }
                 />
+                <PermissionToggle
+                  label="Delete songs"
+                  checked={view.state.permissions.guestsCanRemoveFromQueue}
+                  disabled={Boolean(pendingAction)}
+                  onChange={(guestsCanRemoveFromQueue) =>
+                    updatePermissions({
+                      ...view.state!.permissions,
+                      guestsCanRemoveFromQueue,
+                    })
+                  }
+                />
               </div>
             </section>
           ) : null}
@@ -208,7 +221,7 @@ function App() {
           <QueueCard
             state={view.state}
             canReorder={canReorderQueue}
-            canRemove={Boolean(isHost)}
+            canRemove={canRemoveFromQueue}
             pendingAction={pendingAction}
             act={act}
           />

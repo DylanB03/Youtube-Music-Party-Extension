@@ -66,6 +66,8 @@ type PendingAutoAdvance = {
 
 const AUTO_ADVANCE_EVENT_SUPPRESSION_MS = 15_000;
 const EXTERNAL_NAV_DEFER_MS = 1_500;
+const LOCAL_DRIFT_MONITOR_INTERVAL_MS = 1_000;
+const LOCAL_DRIFT_CORRECTION_COOLDOWN_MS = 3_000;
 
 export class PartyController {
   private session: ActiveSession | null = null;
@@ -76,6 +78,10 @@ export class PartyController {
   private hostRequeueInFlight = false;
   private hostResumeInFlight = false;
   private externalNavTimer: ReturnType<typeof setTimeout> | null = null;
+  private localDriftMonitorTimer: ReturnType<typeof setInterval> | null = null;
+  private localDriftMonitorInFlight = false;
+  private lastLocalDriftCorrectionAtMs = 0;
+  private guestAdBreakActive = false;
   private hostCanonicalMaxTrackId: string | null = null;
   private hostCanonicalMaxPositionSeconds = 0;
   private lastHostCanonicalPlayback: LocalPlaybackState | null = null;
@@ -403,6 +409,7 @@ export class PartyController {
       if (this.session?.client !== client) return;
       void this.handleConnectionState(state);
     });
+    this.startLocalDriftMonitor();
     client.connect();
     client.send({
       type: "participant.status",
@@ -632,6 +639,7 @@ export class PartyController {
 
   private resetPlaybackRuntimeState(): void {
     this.cancelDeferredExternalNavigation();
+    this.stopLocalDriftMonitor();
     this.lastAutoAdvanceKey = null;
     this.pendingAutoAdvance = null;
     this.hostRequeueInFlight = false;
@@ -640,6 +648,55 @@ export class PartyController {
     this.hostCanonicalMaxPositionSeconds = 0;
     this.lastHostCanonicalPlayback = null;
     this.lastHostLocalPlayback = null;
+    this.lastLocalDriftCorrectionAtMs = 0;
+    this.guestAdBreakActive = false;
+  }
+
+  private startLocalDriftMonitor(): void {
+    if (this.localDriftMonitorTimer) return;
+    this.localDriftMonitorTimer = setInterval(() => {
+      void this.monitorLocalGuestDrift();
+    }, LOCAL_DRIFT_MONITOR_INTERVAL_MS);
+    (
+      this.localDriftMonitorTimer as unknown as { unref?: () => void }
+    ).unref?.();
+  }
+
+  private stopLocalDriftMonitor(): void {
+    if (!this.localDriftMonitorTimer) return;
+    clearInterval(this.localDriftMonitorTimer);
+    this.localDriftMonitorTimer = null;
+    this.localDriftMonitorInFlight = false;
+  }
+
+  private async monitorLocalGuestDrift(): Promise<void> {
+    if (this.localDriftMonitorInFlight) return;
+    const session = this.session;
+    if (!session?.state) return;
+    if (session.localSyncStatus !== "in_sync") return;
+    if (session.state.hostParticipantId === session.participantId) return;
+    if (!session.state.playback.track) return;
+    if (
+      Date.now() - this.lastLocalDriftCorrectionAtMs <
+      LOCAL_DRIFT_CORRECTION_COOLDOWN_MS
+    ) {
+      return;
+    }
+
+    this.localDriftMonitorInFlight = true;
+    try {
+      const result = await this.playback.reconcile(
+        session,
+        this.partyTabId ?? undefined,
+      );
+      if (this.session !== session) return;
+      if (result !== "unchanged") {
+        this.lastLocalDriftCorrectionAtMs = Date.now();
+      }
+      await this.handlePlaybackResult(result);
+    } finally {
+      this.localDriftMonitorInFlight = false;
+    }
   }
 
   private scheduleDeferredExternalNavigation(): void {
@@ -780,9 +837,34 @@ export class PartyController {
   }
 
   private async handleGuestPlaybackEvent(event: LocalPlaybackEvent): Promise<void> {
-    if (this.session?.localSyncStatus !== "in_sync") return;
+    const session = this.session;
+    if (!session) return;
 
-    const decision = this.playback.decideGuestAction(event, this.session);
+    if (event.playback.interruption === "advertisement") {
+      this.guestAdBreakActive = true;
+      return;
+    }
+
+    if (this.guestAdBreakActive) {
+      this.guestAdBreakActive = false;
+      if (session.state?.playback.track) {
+        const result = await this.playback.apply(
+          session,
+          this.partyTabId ?? undefined,
+        );
+        if (this.session !== session) return;
+        if (result === "applied") {
+          await this.setLocalSyncStatus("in_sync");
+        } else {
+          await this.handlePlaybackResult(result);
+        }
+      }
+      return;
+    }
+
+    if (session.localSyncStatus !== "in_sync") return;
+
+    const decision = this.playback.decideGuestAction(event, session);
     switch (decision) {
       case "out_of_sync":
         await this.setLocalSyncStatus("out_of_sync");
@@ -794,7 +876,7 @@ export class PartyController {
 
       case "correct_drift":
         await this.handlePlaybackResult(
-          await this.playback.apply(this.session, this.partyTabId ?? undefined),
+          await this.playback.apply(session, this.partyTabId ?? undefined),
         );
         return;
 
@@ -808,6 +890,8 @@ export class PartyController {
   ): Promise<void> {
     if (result === "navigating") {
       await this.setLocalSyncStatus("navigating");
+    } else if (result === "out_of_sync") {
+      await this.setLocalSyncStatus("out_of_sync");
     } else if (result === "track_unavailable") {
       await this.setLocalSyncStatus("track_unavailable");
     }

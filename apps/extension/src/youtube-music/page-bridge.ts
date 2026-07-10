@@ -17,14 +17,6 @@ type PageBridgeCommand =
       type: "getTrack";
     }
   | {
-      type: "loadVideoById";
-      videoId: string;
-    }
-  | {
-      type: "setWatchUrl";
-      videoId: string;
-    }
-  | {
       type: "pause";
     };
 
@@ -43,14 +35,6 @@ export async function getPagePlayerVideoId(): Promise<string | null> {
 
 export async function getPagePlayerTrack(): Promise<Track | null> {
   return sendPageCommand<Track | null>({ type: "getTrack" });
-}
-
-export async function loadPagePlayerVideo(videoId: string): Promise<void> {
-  await sendPageCommand<null>({ type: "loadVideoById", videoId });
-}
-
-export async function setPageWatchUrl(videoId: string): Promise<void> {
-  await sendPageCommand<null>({ type: "setWatchUrl", videoId });
 }
 
 export async function pausePagePlayer(): Promise<void> {
@@ -95,7 +79,6 @@ export function installPageBridgeListener(): void {
     playerApi?: {
       getVideoData?: () => PagePlayerVideoData;
       getPlayerResponse?: () => PagePlayerResponse;
-      loadVideoById?: (videoId: string) => void;
       pauseVideo?: () => void;
     };
   };
@@ -112,11 +95,6 @@ export function installPageBridgeListener(): void {
     );
   };
   const getVideoId = (): string | null => getTrack()?.videoId ?? null;
-  const setWatchUrl = (videoId: string) => {
-    const url = new URL("/watch", location.origin);
-    url.searchParams.set("v", videoId);
-    history.pushState(history.state, "", url);
-  };
 
   window.addEventListener(PAGE_BRIDGE_REQUEST_EVENT, (event: Event) => {
     const detail = (
@@ -145,22 +123,6 @@ export function installPageBridgeListener(): void {
 
       if (command.type === "getTrack") {
         respond(true, getTrack());
-        return;
-      }
-
-      if (command.type === "loadVideoById" && command.videoId) {
-        const app = getApp();
-        if (!app?.playerApi?.loadVideoById) {
-          throw new Error("YouTube Music player API is not ready.");
-        }
-        app.playerApi.loadVideoById(command.videoId);
-        respond(true, null);
-        return;
-      }
-
-      if (command.type === "setWatchUrl" && command.videoId) {
-        setWatchUrl(command.videoId);
-        respond(true, null);
         return;
       }
 

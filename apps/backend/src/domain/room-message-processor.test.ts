@@ -10,7 +10,11 @@ function createRoom(): PartyRoomState {
     revision: 7,
     hostParticipantId: "host",
     inviteCode: "ABC123",
-    permissions: { guestsCanSkip: false, guestsCanAddToQueue: true },
+    permissions: {
+      guestsCanSkip: false,
+      guestsCanAddToQueue: true,
+      guestsCanRemoveFromQueue: false,
+    },
     playback: {
       track: { videoId: "playing" },
       paused: false,

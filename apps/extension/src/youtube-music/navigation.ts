@@ -1,14 +1,10 @@
-import { findMediaElement, findTrackLink, readCurrentTrack } from "./selectors";
-import {
-  getPagePlayerVideoId,
-  loadPagePlayerVideo,
-  setPageWatchUrl,
-} from "./page-bridge";
+import { findMediaElement, findTrackLink } from "./selectors";
+import { getPagePlayerVideoId } from "./page-bridge";
 
 const TRACK_NAVIGATION_TIMEOUT_MS = 10_000;
 
 export async function loadTrack(videoId: string): Promise<void> {
-  if ((await readActiveVideoId()) === videoId) return;
+  if ((await readVerifiedPlayerVideoId()) === videoId) return;
 
   const targetUrl = new URL("/watch", location.origin);
   targetUrl.searchParams.set("v", videoId);
@@ -16,25 +12,12 @@ export async function loadTrack(videoId: string): Promise<void> {
   if (existingLink) {
     dispatchGuardedEndpointClick(existingLink);
     if (await waitForTrack(videoId, 2_500)) {
-      await setPageWatchUrl(videoId);
       return;
     }
-  }
-
-  try {
-    await loadPagePlayerVideo(videoId);
-    if (await waitForTrack(videoId, TRACK_NAVIGATION_TIMEOUT_MS)) {
-      await setPageWatchUrl(videoId);
-      return;
-    }
-  } catch {
-    // Fall through to YouTube Music's SPA navigation path when the player API
-    // is unavailable on a partially loaded page.
   }
 
   dispatchYouTubeMusicNavigation(videoId, targetUrl);
   if (await waitForTrack(videoId, TRACK_NAVIGATION_TIMEOUT_MS)) {
-    await setPageWatchUrl(videoId);
     return;
   }
 
@@ -54,20 +37,22 @@ export async function waitForMedia(): Promise<HTMLMediaElement> {
 async function waitForTrack(videoId: string, timeoutMs: number): Promise<boolean> {
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
-    if ((await readActiveVideoId()) === videoId) return true;
+    if ((await readVerifiedPlayerVideoId()) === videoId) return true;
     await delay(200);
   }
   return false;
 }
 
-async function readActiveVideoId(): Promise<string | null> {
+async function readVerifiedPlayerVideoId(): Promise<string | null> {
   try {
-    const pagePlayerVideoId = await getPagePlayerVideoId();
-    if (pagePlayerVideoId) return pagePlayerVideoId;
+    return await getPagePlayerVideoId();
   } catch {
-    // Fall back to the URL when the page player API is not ready yet.
+    // Do not fall back to the URL here. The URL can be updated before
+    // YouTube Music's app/player state has actually switched tracks, which can
+    // leave the visible player bar showing one song while the media element
+    // plays another.
+    return null;
   }
-  return readCurrentTrack()?.videoId ?? null;
 }
 
 function dispatchYouTubeMusicNavigation(videoId: string, url: URL): void {

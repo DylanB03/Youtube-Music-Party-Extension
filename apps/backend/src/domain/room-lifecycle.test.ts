@@ -13,6 +13,7 @@ function createState(): PartyRoomState {
     permissions: {
       guestsCanSkip: false,
       guestsCanAddToQueue: true,
+      guestsCanRemoveFromQueue: false,
     },
     playback: {
       track: null,

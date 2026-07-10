@@ -76,6 +76,7 @@ test("two clients share queue, permissions, playback, reconnect, and host transf
       permissions: {
         guestsCanSkip: true,
         guestsCanAddToQueue: false,
+        guestsCanRemoveFromQueue: false,
       },
       expectedRevision: queued.state.revision,
     });

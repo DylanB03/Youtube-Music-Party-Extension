@@ -11,6 +11,7 @@ function createView(participantId: string | null): SessionView {
     permissions: {
       guestsCanSkip: false,
       guestsCanAddToQueue: false,
+      guestsCanRemoveFromQueue: false,
     },
     playback: {
       track: null,

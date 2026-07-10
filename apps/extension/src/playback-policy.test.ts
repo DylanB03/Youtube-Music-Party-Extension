@@ -31,9 +31,9 @@ describe("guest playback policy", () => {
     );
   });
 
-  it("marks large drift out of sync", () => {
+  it("auto-corrects large same-track drift instead of forcing manual rejoin", () => {
     expect(decideGuestPlaybackAction(progress(15), canonical, 3_000)).toBe(
-      "out_of_sync",
+      "correct_drift",
     );
   });
 
@@ -53,6 +53,49 @@ describe("guest playback policy", () => {
     );
   });
 
+  it("ignores advertisements even when YouTube reports different ad playback", () => {
+    const event: LocalPlaybackEvent = {
+      type: "local.interruption",
+      playback: {
+        track: { videoId: "ad-video" },
+        paused: false,
+        positionSeconds: 3,
+        buffering: false,
+        interruption: "advertisement",
+      },
+    };
+
+    expect(decideGuestPlaybackAction(event, canonical, 3_000)).toBe("ignore");
+  });
+
+  it("ignores same-track buffering instead of forcing a manual rejoin", () => {
+    const event: LocalPlaybackEvent = {
+      type: "local.pause",
+      playback: {
+        track: { videoId: "track-a" },
+        paused: true,
+        positionSeconds: 10,
+        buffering: true,
+      },
+    };
+
+    expect(decideGuestPlaybackAction(event, canonical, 3_000)).toBe("ignore");
+  });
+
+  it("ignores buffering drift while the correct track is still loading", () => {
+    const event: LocalPlaybackEvent = {
+      type: "local.buffering",
+      playback: {
+        track: { videoId: "track-a" },
+        paused: false,
+        positionSeconds: 0,
+        buffering: true,
+      },
+    };
+
+    expect(decideGuestPlaybackAction(event, canonical, 3_000)).toBe("ignore");
+  });
+
   it("marks a guest on the wrong track out of sync even at the expected position", () => {
     const event: LocalPlaybackEvent = {
       type: "local.progress",
@@ -60,6 +103,38 @@ describe("guest playback policy", () => {
         track: { videoId: "wrong-track" },
         paused: false,
         positionSeconds: 12,
+        buffering: false,
+      },
+    };
+
+    expect(decideGuestPlaybackAction(event, canonical, 3_000)).toBe(
+      "out_of_sync",
+    );
+  });
+
+  it("still marks an unbuffered manual pause out of sync", () => {
+    const event: LocalPlaybackEvent = {
+      type: "local.pause",
+      playback: {
+        track: { videoId: "track-a" },
+        paused: true,
+        positionSeconds: 12,
+        buffering: false,
+      },
+    };
+
+    expect(decideGuestPlaybackAction(event, canonical, 3_000)).toBe(
+      "out_of_sync",
+    );
+  });
+
+  it("still marks a manual seek out of sync", () => {
+    const event: LocalPlaybackEvent = {
+      type: "local.seek",
+      playback: {
+        track: { videoId: "track-a" },
+        paused: false,
+        positionSeconds: 30,
         buffering: false,
       },
     };
@@ -82,5 +157,21 @@ describe("guest playback policy", () => {
         3_000,
       ),
     ).toBe(true);
+  });
+
+  it("does not fight YouTube while an advertisement is active", () => {
+    expect(
+      canonicalPlaybackNeedsApplication(
+        {
+          track: { videoId: "ad-video" },
+          paused: false,
+          positionSeconds: 3,
+          buffering: false,
+          interruption: "advertisement",
+        },
+        canonical,
+        3_000,
+      ),
+    ).toBe(false);
   });
 });

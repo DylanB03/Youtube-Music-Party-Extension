@@ -352,6 +352,25 @@ small {
   padding: 0.35rem 0.55rem;
 }
 
+.queue-actions .icon-button {
+  align-items: center;
+  border-radius: 0.45rem;
+  display: inline-flex;
+  justify-content: center;
+  line-height: 0;
+  padding: 0.35rem;
+}
+
+.queue-actions .icon-button svg {
+  fill: currentColor;
+  height: 1rem;
+  width: 1rem;
+}
+
+.queue-actions .icon-button.danger {
+  color: #f95738;
+}
+
 .participant {
   display: flex;
   justify-content: space-between;

@@ -1,9 +1,10 @@
 import {
   currentPlaybackPositionSeconds,
+  DRIFT_APPLY_TOLERANCE_SECONDS,
+  isWithinPlaybackDrift,
   type LocalPlaybackEvent,
   type LocalPlaybackState,
   type PartyPlaybackState,
-  shouldMarkOutOfSync,
 } from "@ytm-party/shared";
 import {
   canonicalPlaybackNeedsApplication,
@@ -24,6 +25,7 @@ export type PlaybackSyncResult =
   | "applied"
   | "unchanged"
   | "navigating"
+  | "out_of_sync"
   | "track_unavailable";
 
 export class PlaybackSynchronizer {
@@ -90,10 +92,10 @@ export class PlaybackSynchronizer {
         ? local?.track?.videoId === playback.track.videoId
         : local?.paused === true;
       if (attempt === 0 && correctTrack) continue;
-      return "track_unavailable";
+      return correctTrack ? "out_of_sync" : "track_unavailable";
     }
 
-    return "track_unavailable";
+    return "out_of_sync";
   }
 
   private matchesAppliedPlayback(
@@ -103,6 +105,11 @@ export class PlaybackSynchronizer {
     if (!applied.track) return local.paused;
     if (local.track?.videoId !== applied.track.videoId) return false;
     if (local.paused !== applied.paused) return false;
-    return !shouldMarkOutOfSync(local.positionSeconds, applied, Date.now());
+    return isWithinPlaybackDrift(
+      local.positionSeconds,
+      applied,
+      Date.now(),
+      DRIFT_APPLY_TOLERANCE_SECONDS,
+    );
   }
 }

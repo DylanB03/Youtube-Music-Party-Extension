@@ -1,6 +1,7 @@
 import type { PartyPlaybackState } from "./protocol";
 
 export const DRIFT_IGNORE_SECONDS = 0.25;
+export const DRIFT_APPLY_TOLERANCE_SECONDS = 0.5;
 export const DRIFT_REJOIN_SECONDS = 2;
 
 export function currentPlaybackPositionSeconds(
@@ -39,6 +40,20 @@ export function shouldCorrectDrift(
   playback: PartyPlaybackState,
   nowMs = Date.now(),
 ): boolean {
+  return !isWithinPlaybackDrift(
+    localPositionSeconds,
+    playback,
+    nowMs,
+    DRIFT_IGNORE_SECONDS,
+  );
+}
+
+export function isWithinPlaybackDrift(
+  localPositionSeconds: number,
+  playback: PartyPlaybackState,
+  nowMs = Date.now(),
+  toleranceSeconds = DRIFT_IGNORE_SECONDS,
+): boolean {
   const expected = currentPlaybackPositionSeconds(playback, nowMs);
-  return Math.abs(localPositionSeconds - expected) > DRIFT_IGNORE_SECONDS;
+  return Math.abs(localPositionSeconds - expected) <= toleranceSeconds;
 }
