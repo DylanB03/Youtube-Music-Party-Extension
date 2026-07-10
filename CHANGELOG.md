@@ -2,7 +2,44 @@
 
 All notable changes to this project are documented in this file.
 
-## [Unreleased]
+## [0.1.2] - 2026-07-10
+
+### Changed
+
+- Bumped the root package, workspace packages, and lockfile package records to
+  version 0.1.2.
+- Improved guest playback recovery so application verification can distinguish
+  unavailable tracks from recoverable out-of-sync playback.
+- Tightened playback drift handling with a dedicated apply tolerance and
+  buffering-aware guest sync decisions.
+- Changed YouTube Music track navigation to rely on verified page-player state
+  instead of URL updates or direct page-player load commands.
+
+### Added
+
+- Added a host-controlled guest permission for removing queued songs, including
+  protocol normalization for older room state.
+
+### Fixed
+
+- Fixed guest queue removal authorization so hosts can separately allow or deny
+  guest song deletion.
+- Fixed ad and buffering edge cases that could force unnecessary playback
+  correction or out-of-sync transitions.
+- Fixed stale or misleading track application checks by verifying the actual
+  YouTube Music player video before accepting navigation.
+- Added regression coverage for guest permissions, playback recovery, drift
+  tolerance, protocol validation, room state normalization, and browser room
+  flows.
+
+## [0.1.1] - 2026-07-09
+
+### Changed
+
+- Bumped the root package, backend workspace, extension workspace, shared
+  workspace, and lockfile package records to version 0.1.1.
+
+## [0.1.0] - 2026-07-09
 
 ### Release preparation
 
