@@ -3,6 +3,7 @@ import { defineConfig } from "@playwright/test";
 export default defineConfig({
   testDir: "./tests/browser",
   timeout: 45_000,
+  retries: process.env.CI ? 2 : 0,
   webServer: {
     command:
       "env CI=1 XDG_CONFIG_HOME=/tmp npm run dev:backend:e2e",
