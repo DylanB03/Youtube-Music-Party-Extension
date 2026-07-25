@@ -4,6 +4,7 @@ import type {
   LocalPlaybackState,
   PartyPlaybackState,
   PartyRoomState,
+  SyncStatus,
   Track,
 } from "@ytm-party/shared";
 import { PartyController } from "./party-controller";
@@ -109,6 +110,7 @@ class FakeTabs {
   applied: PartyPlaybackState[] = [];
   failApply = false;
   failAfterApply = false;
+  positionOffsetSeconds = 0;
   applicationResult: "applied" | "navigating" = "applied";
   activePartyTabId: number | null = null;
   playback: LocalPlaybackState = {
@@ -131,7 +133,7 @@ class FakeTabs {
       this.playback = {
         track: playback.track,
         paused: playback.paused,
-        positionSeconds: playback.positionSeconds,
+        positionSeconds: playback.positionSeconds + this.positionOffsetSeconds,
         buffering: false,
       };
     }
@@ -170,7 +172,9 @@ function roomState(): PartyRoomState {
   };
 }
 
-async function createGuestController(): Promise<{
+async function createGuestController(
+  localSyncStatus: SyncStatus = "in_sync",
+): Promise<{
   controller: PartyController;
   connection: FakeConnection;
   tabs: FakeTabs;
@@ -181,7 +185,7 @@ async function createGuestController(): Promise<{
     participantId: "guest",
     participantToken: "token",
     displayName: "Guest",
-    localSyncStatus: "in_sync",
+    localSyncStatus,
   };
   const connection = new FakeConnection();
   const tabs = new FakeTabs();
@@ -205,7 +209,7 @@ async function createGuestController(): Promise<{
   );
   await controller.initialize();
   connection.emitSnapshot(roomState());
-  await Promise.resolve();
+  await flushControllerWork();
   return { controller, connection, tabs, views };
 }
 
@@ -242,7 +246,7 @@ async function createHostController(): Promise<{
   );
   await controller.initialize();
   connection.emitSnapshot(roomState());
-  await Promise.resolve();
+  await flushControllerWork();
   return { controller, connection, tabs };
 }
 
@@ -482,7 +486,7 @@ describe("party controller orchestration", () => {
     }
   });
 
-  it("automatically rejoins guest playback after an advertisement clears", async () => {
+  it("keeps guest recovery automatic before and after an advertisement", async () => {
     const { controller, connection, tabs } = await createGuestController();
     connection.sent = [];
 
@@ -496,7 +500,7 @@ describe("party controller orchestration", () => {
       },
     });
 
-    expect(controller.getView().localSyncStatus).toBe("out_of_sync");
+    expect(controller.getView().localSyncStatus).toBe("in_sync");
 
     await controller.handleLocalPlaybackEvent({
       type: "local.interruption",
@@ -529,7 +533,7 @@ describe("party controller orchestration", () => {
           message.type === "participant.status" &&
           message.syncStatus === "in_sync",
       ),
-    ).toHaveLength(1);
+    ).toHaveLength(0);
   });
 
   it("advances only once for duplicate host ended events", async () => {
@@ -554,7 +558,7 @@ describe("party controller orchestration", () => {
     ).toHaveLength(1);
   });
 
-  it("marks the host unavailable when canonical playback cannot be verified", async () => {
+  it("does not eject the host after one transient canonical playback failure", async () => {
     const { controller, connection, tabs } = await createHostController();
     tabs.failApply = true;
     connection.sent = [];
@@ -571,7 +575,7 @@ describe("party controller orchestration", () => {
     await flushControllerWork();
 
     expect(controller.getView()).toMatchObject({
-      localSyncStatus: "track_unavailable",
+      localSyncStatus: "in_sync",
     });
     expect(
       connection.sent.filter(
@@ -579,7 +583,34 @@ describe("party controller orchestration", () => {
           message.type === "participant.status" &&
           message.syncStatus === "track_unavailable",
       ),
-    ).toHaveLength(1);
+    ).toHaveLength(0);
+  });
+
+  it("keeps the host in sync when the correct track readback is briefly imprecise", async () => {
+    const { controller, connection, tabs } = await createHostController();
+    tabs.positionOffsetSeconds = 1;
+    tabs.applied = [];
+    connection.sent = [];
+    const nextState = roomState();
+    nextState.revision = 3;
+    nextState.playback = {
+      track: { videoId: "queued-track" },
+      paused: false,
+      positionSeconds: 0,
+      effectiveAtMs: Date.now(),
+    };
+
+    connection.emitSnapshot(nextState);
+    await flushControllerWork();
+
+    expect(tabs.applied).toHaveLength(2);
+    expect(controller.getView().localSyncStatus).toBe("in_sync");
+    expect(connection.sent).not.toContainEqual(
+      expect.objectContaining({
+        type: "participant.status",
+        syncStatus: "out_of_sync",
+      }),
+    );
   });
 
   it("ignores YouTube Music auto-next host events while party auto-advance is pending", async () => {
@@ -780,15 +811,16 @@ describe("party controller orchestration", () => {
     await flushControllerWork();
     tabs.applied = [];
     connection.sent = [];
+    tabs.playback = {
+      track: { videoId: "next-track" },
+      paused: false,
+      positionSeconds: 0,
+      buffering: false,
+    };
 
     await controller.handleLocalPlaybackEvent({
       type: "local.progress",
-      playback: {
-        track: { videoId: "next-track" },
-        paused: false,
-        positionSeconds: 0,
-        buffering: false,
-      },
+      playback: tabs.playback,
     });
 
     expect(tabs.applied.at(-1)?.track?.videoId).toBe("next-track");
@@ -1198,24 +1230,113 @@ describe("party controller orchestration", () => {
     ).toHaveLength(0);
   });
 
-  it("forces queue advancement when recurring progress reports the wrong song", async () => {
-    const { controller, connection } = await createHostController();
+  it("restores the canonical host song instead of skipping on stale wrong-track progress", async () => {
+    const { controller, connection, tabs } = await createHostController();
     connection.sent = [];
+    tabs.applied = [];
+    tabs.playback = {
+      track: { videoId: "youtube-auto-next" },
+      paused: false,
+      positionSeconds: 2,
+      buffering: false,
+    };
 
     await controller.handleLocalPlaybackEvent({
       type: "local.progress",
-      playback: {
-        track: { videoId: "youtube-auto-next" },
-        paused: false,
-        positionSeconds: 2,
-        buffering: false,
-      },
+      playback: tabs.playback,
     });
 
     expect(
       connection.sent.filter((message) => message.type === "playback.skip"),
-    ).toHaveLength(1);
+    ).toHaveLength(0);
+    expect(tabs.applied.at(-1)?.track?.videoId).toBe("current-track");
     expect(controller.getView().localSyncStatus).toBe("in_sync");
+  });
+
+  it("does not consume a lone song added after the queue was empty", async () => {
+    const { controller, connection, tabs } = await createHostController();
+    const empty = roomState();
+    empty.revision = 3;
+    empty.playback = {
+      track: null,
+      paused: true,
+      positionSeconds: 0,
+      effectiveAtMs: Date.now(),
+    };
+    connection.emitSnapshot(empty);
+    await flushControllerWork();
+
+    const addedAlone = roomState();
+    addedAlone.revision = 4;
+    addedAlone.queue = [];
+    addedAlone.playback = {
+      track: { videoId: "added-alone" },
+      paused: false,
+      positionSeconds: 0,
+      effectiveAtMs: Date.now(),
+    };
+    connection.emitSnapshot(addedAlone);
+    await flushControllerWork();
+
+    connection.sent = [];
+    tabs.applied = [];
+    tabs.playback = {
+      track: { videoId: "stale-native-track" },
+      paused: false,
+      positionSeconds: 3,
+      buffering: false,
+    };
+    await controller.handleLocalPlaybackEvent({
+      type: "local.progress",
+      playback: tabs.playback,
+    });
+
+    expect(
+      connection.sent.filter((message) => message.type === "playback.skip"),
+    ).toHaveLength(0);
+    expect(tabs.applied.at(-1)?.track?.videoId).toBe("added-alone");
+    expect(controller.getView().state?.playback.track?.videoId).toBe(
+      "added-alone",
+    );
+  });
+
+  it("automatically restores a wrong-track guest without sending out-of-sync status", async () => {
+    const { controller, connection, tabs } = await createGuestController();
+    connection.sent = [];
+    tabs.applied = [];
+    tabs.playback = {
+      track: { videoId: "stale-transition-track" },
+      paused: false,
+      positionSeconds: 2,
+      buffering: false,
+    };
+
+    await controller.handleLocalPlaybackEvent({
+      type: "local.progress",
+      playback: tabs.playback,
+    });
+
+    expect(tabs.applied.at(-1)?.track?.videoId).toBe("current-track");
+    expect(controller.getView().localSyncStatus).toBe("in_sync");
+    expect(connection.sent).not.toContainEqual(
+      expect.objectContaining({
+        type: "participant.status",
+        syncStatus: "out_of_sync",
+      }),
+    );
+  });
+
+  it("automatically recovers a session persisted as out of sync", async () => {
+    const { controller, connection, tabs } =
+      await createGuestController("out_of_sync");
+    await flushControllerWork();
+
+    expect(tabs.applied.at(-1)?.track?.videoId).toBe("current-track");
+    expect(controller.getView().localSyncStatus).toBe("in_sync");
+    expect(connection.sent).toContainEqual({
+      type: "participant.status",
+      syncStatus: "in_sync",
+    });
   });
 
   it("auto-advances the queue when the current track ends", async () => {

@@ -68,6 +68,7 @@ const AUTO_ADVANCE_EVENT_SUPPRESSION_MS = 15_000;
 const EXTERNAL_NAV_DEFER_MS = 1_500;
 const LOCAL_DRIFT_MONITOR_INTERVAL_MS = 1_000;
 const LOCAL_DRIFT_CORRECTION_COOLDOWN_MS = 3_000;
+const PLAYBACK_FAILURES_BEFORE_MANUAL_RECOVERY = 3;
 
 export class PartyController {
   private session: ActiveSession | null = null;
@@ -82,6 +83,8 @@ export class PartyController {
   private localDriftMonitorInFlight = false;
   private lastLocalDriftCorrectionAtMs = 0;
   private guestAdBreakActive = false;
+  private playbackFailureKey: string | null = null;
+  private playbackFailureCount = 0;
   private hostCanonicalMaxTrackId: string | null = null;
   private hostCanonicalMaxPositionSeconds = 0;
   private lastHostCanonicalPlayback: LocalPlaybackState | null = null;
@@ -251,6 +254,8 @@ export class PartyController {
       } else if (result === "track_unavailable") {
         session.lastError = "Could not load the party track. Try again.";
         await this.setLocalSyncStatus("track_unavailable");
+      } else {
+        await this.handlePlaybackResult(result);
       }
     } finally {
       if (this.session === session) {
@@ -438,6 +443,13 @@ export class PartyController {
         this.partyTabId ?? undefined,
       );
       if (this.session !== session) return;
+      // Snapshot handlers can overlap while YouTube Music is navigating. A
+      // result started for an older snapshot must not clear transition guards
+      // or change recovery state for the newer canonical song.
+      if (session.state !== state) {
+        this.publishState();
+        return;
+      }
       await this.handlePlaybackResult(result);
       if (this.session !== session) return;
       if (state.hostParticipantId === session.participantId) {
@@ -543,16 +555,22 @@ export class PartyController {
       return;
     }
 
-    // A playing wrong track must never remain invisible if YouTube Music drops
-    // both ended and track-changed events. Progress is recurring evidence that
-    // native auto-next escaped; in a party, the authoritative queue wins.
+    // A wrong-track progress report without end-of-track evidence is commonly
+    // stale YouTube Music metadata just after a party navigation. Restore the
+    // current canonical song locally; advancing the shared queue here can
+    // consume every queued (or newly added) song in a loop.
     if (
       playbackDiverged &&
       event.type === "local.progress" &&
       this.externalNavTimer === null
     ) {
-      this.cancelDeferredExternalNavigation();
-      if (session.state) await this.advanceAfterTrackEnd(session.state);
+      const result = await this.playback.reconcile(
+        session,
+        this.partyTabId ?? undefined,
+      );
+      if (this.session === session) {
+        await this.handlePlaybackResult(result);
+      }
       return;
     }
 
@@ -595,7 +613,12 @@ export class PartyController {
     state: PartyRoomState,
   ): boolean {
     if (this.hostResumeInFlight || this.hostRequeueInFlight) return false;
-    if (session.localSyncStatus === "in_sync") return true;
+    if (
+      session.localSyncStatus === "in_sync" ||
+      session.localSyncStatus === "out_of_sync"
+    ) {
+      return true;
+    }
     // After a host requeue the party has no current track until the host resumes
     // or adds a song. Apply server-selected playback in those cases.
     if (
@@ -650,6 +673,7 @@ export class PartyController {
     this.lastHostLocalPlayback = null;
     this.lastLocalDriftCorrectionAtMs = 0;
     this.guestAdBreakActive = false;
+    this.resetPlaybackFailures();
   }
 
   private startLocalDriftMonitor(): void {
@@ -745,6 +769,8 @@ export class PartyController {
               ...canonical.track,
               title: observedTrack.title ?? canonical.track.title,
               artist: observedTrack.artist ?? canonical.track.artist,
+              thumbnailUrl:
+                observedTrack.thumbnailUrl ?? canonical.track.thumbnailUrl,
             }
           : canonical.track;
       await this.enqueueMutation((operationId, expectedRevision) => ({
@@ -866,19 +892,19 @@ export class PartyController {
 
     const decision = this.playback.decideGuestAction(event, session);
     switch (decision) {
-      case "out_of_sync":
-        await this.setLocalSyncStatus("out_of_sync");
-        return;
-
       case "track_unavailable":
         await this.setLocalSyncStatus("track_unavailable");
         return;
 
-      case "correct_drift":
-        await this.handlePlaybackResult(
-          await this.playback.apply(session, this.partyTabId ?? undefined),
+      case "reconcile": {
+        const result = await this.playback.reconcile(
+          session,
+          this.partyTabId ?? undefined,
         );
+        if (this.session !== session) return;
+        await this.handlePlaybackResult(result);
         return;
+      }
 
       case "ignore":
         return;
@@ -888,13 +914,56 @@ export class PartyController {
   private async handlePlaybackResult(
     result: PlaybackSyncResult,
   ): Promise<void> {
+    const session = this.requireSession();
+    if (result === "applied" || result === "unchanged") {
+      this.resetPlaybackFailures();
+      if (
+        session.localSyncStatus === "out_of_sync" ||
+        session.localSyncStatus === "track_unavailable"
+      ) {
+        await this.setLocalSyncStatus("in_sync");
+      }
+      return;
+    }
+
     if (result === "navigating") {
+      this.resetPlaybackFailures();
       await this.setLocalSyncStatus("navigating");
     } else if (result === "out_of_sync") {
-      await this.setLocalSyncStatus("out_of_sync");
+      // A correct-track verification miss is recoverable. Keep the participant
+      // active so the drift monitor can retry instead of forcing a manual
+      // "Join playback" action. This is especially important for the host,
+      // whose player is the source of authority.
+      this.recordPlaybackFailure();
+      if (session.localSyncStatus !== "in_sync") {
+        await this.setLocalSyncStatus("in_sync");
+      }
     } else if (result === "track_unavailable") {
-      await this.setLocalSyncStatus("track_unavailable");
+      const failureCount = this.recordPlaybackFailure();
+      if (
+        session.localSyncStatus !== "in_sync" ||
+        failureCount >= PLAYBACK_FAILURES_BEFORE_MANUAL_RECOVERY
+      ) {
+        await this.setLocalSyncStatus("track_unavailable");
+      }
     }
+  }
+
+  private recordPlaybackFailure(): number {
+    const key = this.session?.state
+      ? playbackKey(this.session.state.playback)
+      : null;
+    if (this.playbackFailureKey !== key) {
+      this.playbackFailureKey = key;
+      this.playbackFailureCount = 0;
+    }
+    this.playbackFailureCount += 1;
+    return this.playbackFailureCount;
+  }
+
+  private resetPlaybackFailures(): void {
+    this.playbackFailureKey = null;
+    this.playbackFailureCount = 0;
   }
 
   private async setLocalSyncStatus(status: SyncStatus): Promise<void> {

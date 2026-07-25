@@ -145,6 +145,12 @@ function createFallbackContainer(clientX: number, clientY: number): HTMLElement 
 function findAddedMenus(records: MutationRecord[]): Set<HTMLElement> {
   const menus = new Set<HTMLElement>();
   for (const record of records) {
+    if (record.target instanceof HTMLElement) {
+      const containingMenu = record.target.closest<HTMLElement>(
+        MENU_ITEMS_SELECTOR,
+      );
+      if (containingMenu) menus.add(containingMenu);
+    }
     for (const node of record.addedNodes) {
       if (!(node instanceof HTMLElement)) continue;
       if (node.matches(MENU_ITEMS_SELECTOR)) menus.add(node);
@@ -180,7 +186,10 @@ function ensurePartyAction(
   }
 
   const existing = menu.querySelector<HTMLElement>(`[${ACTION_ATTRIBUTE}]`);
-  if (existing?.dataset.ytmPartyTrackId === track.videoId) return;
+  if (existing?.dataset.ytmPartyTrackId === track.videoId) {
+    if (menu.firstElementChild !== existing) menu.prepend(existing);
+    return;
+  }
   existing?.remove();
 
   const host = document.createElement("div");
@@ -205,7 +214,7 @@ function ensurePartyAction(
   copy.append(title, detail);
   button.append(icon, copy);
   shadow.append(style, button);
-  menu.append(host);
+  menu.prepend(host);
 
   void configurePartyAction(button, track, selectionStore);
 }

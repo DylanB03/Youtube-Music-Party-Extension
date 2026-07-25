@@ -86,3 +86,8 @@ WXT_PUBLIC_PARTY_API_BASE_URL=https://api.example.com npm run release:extension
 Chrome Web Store does not receive or inject environment variables. Upload the ZIP produced by the command; the selected URL is already compiled into it. Run `npm run verify:extension` after a normal `.env.production` build. If you use a one-command override, inspect the ZIP manifest because the verifier intentionally compares it with the committed production environment.
 
 WXT writes the uploadable ZIP under `apps/extension/.output`. Before submitting, inspect its generated `manifest.json`, confirm that the backend host is HTTPS, and complete the listing using the drafts in `store/`.
+
+For automatic releases, follow the one-time
+[Chrome Web Store CI setup](docs/chrome-web-store-ci.md). After setup, pushing a
+version tag builds, verifies, uploads, and submits the extension through Chrome
+Web Store API v2; Google publishes it after the normal review passes.

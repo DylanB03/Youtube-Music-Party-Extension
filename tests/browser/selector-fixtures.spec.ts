@@ -31,11 +31,12 @@ test("captures known signed-in YouTube Music surface shapes", async () => {
         const container = document.createElement("div");
         container.dataset.selectorFixture = surface.name;
         const row = document.createElement(surface.rowTag);
+        if (surface.rowClass) row.className = surface.rowClass;
         if (surface.videoSource === "row") {
           row.dataset.videoId = surface.videoId;
         }
         const title = document.createElement(surface.titleTag);
-        title.className = "title";
+        title.className = surface.titleClass ?? "title";
         title.textContent = surface.title;
         if (surface.videoSource === "link" && title instanceof HTMLAnchorElement) {
           title.href = `/watch?v=${surface.videoId}`;
@@ -43,15 +44,47 @@ test("captures known signed-in YouTube Music surface shapes", async () => {
         const artist = document.createElement("span");
         artist.className = surface.artistClass;
         artist.textContent = surface.artist;
+        const artwork = document.createElement("img");
+        artwork.src = `https://i.ytimg.com/vi/${surface.videoId}/mqdefault.jpg`;
         const trigger = document.createElement(surface.triggerTag);
         trigger.setAttribute(
           surface.triggerAttribute.name,
           surface.triggerAttribute.value,
         );
-        row.append(title, artist, trigger);
+        const content = surface.contentClass
+          ? document.createElement("div")
+          : null;
+        if (content) {
+          content.className = surface.contentClass;
+          if (surface.boldTitle) {
+            const strong = document.createElement("strong");
+            strong.append(title);
+            content.append(strong, artist);
+          } else {
+            content.append(title, artist);
+          }
+        } else if (surface.boldTitle) {
+          const strong = document.createElement("strong");
+          strong.append(title);
+          row.append(artwork, strong, artist);
+        } else {
+          row.append(artwork, title, artist);
+        }
+
+        let dispatchedTrigger: HTMLElement = trigger;
+        if (surface.nestedMenuButton) {
+          const shape = document.createElement("yt-button-shape");
+          shape.id = "button-shape";
+          const button = document.createElement("button");
+          shape.append(button);
+          trigger.append(shape);
+          dispatchedTrigger = button;
+        }
+        if (content) row.append(artwork, content);
+        row.append(trigger);
         container.append(row);
         document.body.append(container);
-        trigger.dispatchEvent(
+        dispatchedTrigger.dispatchEvent(
           new PointerEvent("pointerdown", {
             bubbles: true,
             composed: true,
@@ -65,6 +98,9 @@ test("captures known signed-in YouTube Music surface shapes", async () => {
       );
       expect(diagnostics.data.lastContextTrack.title, fixture.name).toBe(
         fixture.title,
+      );
+      expect(diagnostics.data.lastContextTrack.thumbnailUrl, fixture.name).toBe(
+        `https://i.ytimg.com/vi/${fixture.videoId}/mqdefault.jpg`,
       );
     }
 

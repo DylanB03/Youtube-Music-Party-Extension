@@ -1,13 +1,18 @@
 export type YouTubeMusicSurfaceFixture = {
   name: string;
   rowTag: string;
+  rowClass?: string;
   videoId: string;
-  videoSource: "link" | "row";
+  videoSource: "link" | "row" | "thumbnail";
   title: string;
   titleTag: string;
+  titleClass?: string;
+  boldTitle?: boolean;
   artist: string;
   artistClass: string;
+  contentClass?: string;
   triggerTag: string;
+  nestedMenuButton?: boolean;
   triggerAttribute: {
     name: string;
     value: string;
@@ -52,16 +57,19 @@ export const youtubeMusicSurfaceFixtures: YouTubeMusicSurfaceFixture[] = [
     triggerAttribute: { name: "class", value: "dropdown-trigger" },
   },
   {
-    name: "queue item",
+    name: "native queue item",
     rowTag: "ytmusic-player-queue-item",
     videoId: "queue-track",
-    videoSource: "row",
+    videoSource: "thumbnail",
     title: "Queue Track",
-    titleTag: "span",
+    titleTag: "yt-formatted-string",
+    titleClass: "",
     artist: "Queue Artist",
-    artistClass: "subtitle",
-    triggerTag: "button",
-    triggerAttribute: { name: "aria-haspopup", value: "true" },
+    artistClass: "",
+    contentClass: "song-info",
+    triggerTag: "ytmusic-menu-renderer",
+    nestedMenuButton: true,
+    triggerAttribute: { name: "aria-haspopup", value: "menu" },
   },
   {
     name: "recommendation card",
@@ -86,5 +94,21 @@ export const youtubeMusicSurfaceFixtures: YouTubeMusicSurfaceFixture[] = [
     artistClass: "subtitle",
     triggerTag: "yt-button-shape",
     triggerAttribute: { name: "aria-label", value: "Action menu" },
+  },
+  {
+    name: "featured search song",
+    rowTag: "div",
+    rowClass: "card-content-container",
+    videoId: "featured-search-track",
+    videoSource: "thumbnail",
+    title: "Featured Search Track",
+    titleTag: "yt-formatted-string",
+    titleClass: "title",
+    boldTitle: true,
+    artist: "Featured Search Artist",
+    artistClass: "subtitle",
+    triggerTag: "ytmusic-menu-renderer",
+    nestedMenuButton: true,
+    triggerAttribute: { name: "aria-haspopup", value: "menu" },
   },
 ];

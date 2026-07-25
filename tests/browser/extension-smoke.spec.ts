@@ -80,7 +80,13 @@ test("loads the extension content script on YouTube Music", async () => {
       const popup = document.createElement("ytmusic-menu-popup-renderer");
       document.body.append(popup);
       window.setTimeout(() => {
-        popup.append(document.createElement("yt-list-view-model"));
+        const list = document.createElement("yt-list-view-model");
+        const nativeAction = document.createElement(
+          "ytmusic-menu-service-item-renderer",
+        );
+        nativeAction.textContent = "Start radio";
+        list.append(nativeAction);
+        popup.append(list);
       }, 100);
     });
 
@@ -89,6 +95,13 @@ test("loads the extension content script on YouTube Music", async () => {
       "data-ytm-party-track-id",
       "party-menu-test",
     );
+    await expect
+      .poll(() =>
+        injectedAction.evaluate(
+          (action) => action.parentElement?.firstElementChild === action,
+        ),
+      )
+      .toBe(true);
     const actionButton = injectedAction.locator("button");
     await expect(actionButton).toBeDisabled();
     await expect(actionButton).toContainText("Join or create a party");

@@ -32,6 +32,20 @@ describe("YouTube Music player metadata", () => {
             videoId: "video-2",
             title: "Response Song",
             author: "Response Artist",
+            thumbnail: {
+              thumbnails: [
+                {
+                  url: "https://example.com/small.jpg",
+                  width: 120,
+                  height: 120,
+                },
+                {
+                  url: "https://example.com/large.jpg",
+                  width: 544,
+                  height: 544,
+                },
+              ],
+            },
           },
         },
         null,
@@ -40,6 +54,7 @@ describe("YouTube Music player metadata", () => {
       videoId: "video-2",
       title: "Response Song",
       artist: "Response Artist",
+      thumbnailUrl: "https://example.com/large.jpg",
     });
   });
 

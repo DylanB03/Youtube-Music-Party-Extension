@@ -7,8 +7,7 @@ import {
 
 export type GuestPlaybackDecision =
   | "ignore"
-  | "correct_drift"
-  | "out_of_sync"
+  | "reconcile"
   | "track_unavailable";
 
 export function decideGuestPlaybackAction(
@@ -23,31 +22,32 @@ export function decideGuestPlaybackAction(
     return "track_unavailable";
   }
   if (event.playback.track?.videoId !== canonical.track?.videoId) {
-    return "out_of_sync";
+    return "reconcile";
   }
   if (event.playback.buffering) {
     return "ignore";
   }
   if (event.type === "local.play" && canonical.paused) {
-    return "out_of_sync";
+    return "reconcile";
   }
-  if (
-    event.type === "local.pause" ||
-    event.type === "local.seek" ||
-    event.type === "local.interruption"
-  ) {
-    return "out_of_sync";
+  if (event.type === "local.pause" && !canonical.paused) {
+    return "reconcile";
+  }
+  if (event.type === "local.interruption") {
+    return "reconcile";
   }
   if (
     event.type !== "local.progress" &&
     event.type !== "local.buffering" &&
     event.type !== "local.play" &&
+    event.type !== "local.pause" &&
+    event.type !== "local.seek" &&
     event.type !== "local.track_changed"
   ) {
     return "ignore";
   }
   if (shouldCorrectDrift(event.playback.positionSeconds, canonical, nowMs)) {
-    return "correct_drift";
+    return "reconcile";
   }
   return "ignore";
 }

@@ -1,7 +1,7 @@
 {
   "name": "youtube-music-party",
   "private": true,
-  "version": "0.1.3",
+  "version": "0.1.4",
   "type": "module",
   "workspaces": [
     "apps/*",
@@ -19,7 +19,9 @@
     "build:extension": "npm --workspace apps/extension run build",
     "capture:store-screenshots": "node scripts/capture-store-screenshots.mjs",
     "verify:extension": "node scripts/verify-extension-package.mjs",
-    "release:extension": "npm --workspace apps/extension run zip"
+    "verify:release-version": "node scripts/verify-release-version.mjs",
+    "release:extension": "npm --workspace apps/extension run zip",
+    "publish:chrome-web-store": "node scripts/publish-chrome-web-store.mjs"
   },
   "devDependencies": {
     "@playwright/test": "^1.53.2",

@@ -86,6 +86,9 @@ export function applyRoomMutation(
               ...state.playback.track,
               title: observedTrack.title ?? state.playback.track.title,
               artist: observedTrack.artist ?? state.playback.track.artist,
+              thumbnailUrl:
+                observedTrack.thumbnailUrl ??
+                state.playback.track.thumbnailUrl,
             }
           : state.playback.track;
         // Restore the currently-playing track to the front of the queue so the

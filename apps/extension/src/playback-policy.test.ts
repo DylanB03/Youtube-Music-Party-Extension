@@ -27,13 +27,13 @@ function progress(positionSeconds: number): LocalPlaybackEvent {
 describe("guest playback policy", () => {
   it("corrects medium drift without forcing manual rejoin", () => {
     expect(decideGuestPlaybackAction(progress(12.6), canonical, 3_000)).toBe(
-      "correct_drift",
+      "reconcile",
     );
   });
 
   it("auto-corrects large same-track drift instead of forcing manual rejoin", () => {
     expect(decideGuestPlaybackAction(progress(15), canonical, 3_000)).toBe(
-      "correct_drift",
+      "reconcile",
     );
   });
 
@@ -96,7 +96,7 @@ describe("guest playback policy", () => {
     expect(decideGuestPlaybackAction(event, canonical, 3_000)).toBe("ignore");
   });
 
-  it("marks a guest on the wrong track out of sync even at the expected position", () => {
+  it("automatically restores a guest on the wrong track", () => {
     const event: LocalPlaybackEvent = {
       type: "local.progress",
       playback: {
@@ -108,11 +108,11 @@ describe("guest playback policy", () => {
     };
 
     expect(decideGuestPlaybackAction(event, canonical, 3_000)).toBe(
-      "out_of_sync",
+      "reconcile",
     );
   });
 
-  it("still marks an unbuffered manual pause out of sync", () => {
+  it("automatically restores an unbuffered guest pause", () => {
     const event: LocalPlaybackEvent = {
       type: "local.pause",
       playback: {
@@ -124,11 +124,11 @@ describe("guest playback policy", () => {
     };
 
     expect(decideGuestPlaybackAction(event, canonical, 3_000)).toBe(
-      "out_of_sync",
+      "reconcile",
     );
   });
 
-  it("still marks a manual seek out of sync", () => {
+  it("automatically restores a guest seek", () => {
     const event: LocalPlaybackEvent = {
       type: "local.seek",
       playback: {
@@ -140,7 +140,7 @@ describe("guest playback policy", () => {
     };
 
     expect(decideGuestPlaybackAction(event, canonical, 3_000)).toBe(
-      "out_of_sync",
+      "reconcile",
     );
   });
 

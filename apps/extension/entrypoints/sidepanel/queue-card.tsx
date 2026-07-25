@@ -113,9 +113,35 @@ export function QueueCard({
                     </svg>
                   </button>
                 ) : null}
+                <span className="queue-artwork" aria-hidden="true">
+                  <svg viewBox="0 0 24 24">
+                    <path d="M15 4.5v10.1a3.5 3.5 0 1 1-1.5-2.87V7.15l-6 1.42v8.03A3.5 3.5 0 1 1 6 13.73V7.38l9-2.13V4.5Z" />
+                  </svg>
+                  <img
+                    src={
+                      item.track.thumbnailUrl ??
+                      youtubeThumbnailUrl(item.track.videoId)
+                    }
+                    alt=""
+                    loading="lazy"
+                    decoding="async"
+                    onError={(event) => {
+                      const fallbackUrl = youtubeThumbnailUrl(item.track.videoId);
+                      if (event.currentTarget.src !== fallbackUrl) {
+                        event.currentTarget.src = fallbackUrl;
+                      } else {
+                        event.currentTarget.hidden = true;
+                      }
+                    }}
+                  />
+                </span>
                 <span className="queue-track">
-                  {item.track.title ?? item.track.videoId}
-                  {item.track.artist ? <small>{item.track.artist}</small> : null}
+                  <span className="queue-track-title">
+                    {item.track.title ?? item.track.videoId}
+                  </span>
+                  {item.track.artist ? (
+                    <small className="queue-track-artist">{item.track.artist}</small>
+                  ) : null}
                 </span>
               </div>
               {canRemove ? (
@@ -155,4 +181,8 @@ export function QueueCard({
       )}
     </section>
   );
+}
+
+function youtubeThumbnailUrl(videoId: string): string {
+  return `https://i.ytimg.com/vi/${encodeURIComponent(videoId)}/mqdefault.jpg`;
 }
