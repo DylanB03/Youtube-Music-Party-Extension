@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { LocalPlaybackState } from "@ytm-party/shared";
-import { PlaybackTransitionDetector, looksLikeNaturalTrackAdvance } from "./playback-transition";
+import {
+  PlaybackEndStallDetector,
+  PlaybackTransitionDetector,
+  looksLikeNaturalTrackAdvance,
+} from "./playback-transition";
 
 function playback(
   videoId: string,
@@ -78,5 +82,69 @@ describe("YouTube Music playback transitions", () => {
     detector.recordEnded(ended);
 
     expect(detector.observe(playback("youtube-next", 0))).toBeNull();
+  });
+
+  it("recovers a playing track that stalls in its final seconds", () => {
+    const detector = new PlaybackEndStallDetector();
+    const stalled = playback("current", 178);
+
+    expect(detector.observe(stalled, 1_000)).toBe(false);
+    expect(detector.observe(stalled, 4_999)).toBe(false);
+    expect(detector.observe(stalled, 5_000)).toBe(true);
+    expect(detector.observe(stalled, 10_000)).toBe(false);
+  });
+
+  it("does not mistake slow but moving playback for a stalled end", () => {
+    const detector = new PlaybackEndStallDetector();
+
+    expect(detector.observe(playback("current", 177), 1_000)).toBe(false);
+    expect(detector.observe(playback("current", 178), 4_000)).toBe(false);
+    expect(detector.observe(playback("current", 179), 7_000)).toBe(false);
+    expect(detector.observe(playback("current", 179), 10_999)).toBe(false);
+    expect(detector.observe(playback("current", 179), 11_000)).toBe(true);
+  });
+
+  it("keeps an intentional near-end pause paused", () => {
+    const detector = new PlaybackEndStallDetector();
+    const paused = {
+      ...playback("current", 179),
+      paused: true,
+    };
+
+    expect(detector.observe(paused, 1_000)).toBe(false);
+    expect(detector.observe(paused, 10_000)).toBe(false);
+    expect(detector.observe({ ...paused, paused: false }, 10_001)).toBe(false);
+    expect(detector.observe({ ...paused, paused: false }, 14_001)).toBe(true);
+  });
+
+  it("recovers a near-end pause caused by buffering", () => {
+    const detector = new PlaybackEndStallDetector();
+    const buffering = {
+      ...playback("current", 179),
+      paused: true,
+      buffering: true,
+    };
+
+    expect(detector.observe(buffering, 1_000)).toBe(false);
+    expect(detector.observe(buffering, 5_000)).toBe(true);
+  });
+
+  it("recognizes a missed native ended event immediately", () => {
+    const detector = new PlaybackEndStallDetector();
+    const ended = {
+      ...playback("current", 180),
+      paused: true,
+    };
+
+    expect(detector.observe(ended, 1_000, true)).toBe(true);
+    expect(detector.observe(ended, 1_001, true)).toBe(false);
+  });
+
+  it("resets the stall timer when the active track changes", () => {
+    const detector = new PlaybackEndStallDetector();
+
+    expect(detector.observe(playback("current", 179), 1_000)).toBe(false);
+    expect(detector.observe(playback("next", 179), 5_000)).toBe(false);
+    expect(detector.observe(playback("next", 179), 9_000)).toBe(true);
   });
 });

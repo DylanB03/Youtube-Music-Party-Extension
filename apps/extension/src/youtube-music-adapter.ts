@@ -10,7 +10,11 @@ import {
   getPagePlayerTrack,
   pausePagePlayer,
 } from "./youtube-music/page-bridge";
-import { PlaybackTransitionDetector, isNearTrackEnd } from "./youtube-music/playback-transition";
+import {
+  PlaybackEndStallDetector,
+  PlaybackTransitionDetector,
+  isNearTrackEnd,
+} from "./youtube-music/playback-transition";
 import {
   findMediaElement,
   inspectSelectorCoverage,
@@ -60,6 +64,7 @@ export function observePlayback(listener: Listener): () => void {
   let nearNaturalEndLatch = false;
   let pollInFlight = false;
   const transitions = new PlaybackTransitionDetector();
+  const endStalls = new PlaybackEndStallDetector();
 
   const emit = (type: LocalPlaybackEvent["type"]) => {
     if (shouldSuppressLocalEvents()) return;
@@ -83,6 +88,7 @@ export function observePlayback(listener: Listener): () => void {
     const onEnded = () => {
       const playback = readPlaybackState(lastPagePlayerTrack);
       transitions.recordEnded(playback);
+      endStalls.observe(playback, Date.now(), true);
       if (!shouldSuppressLocalEvents()) {
         listener({ type: "local.ended", playback });
       }
@@ -132,6 +138,13 @@ export function observePlayback(listener: Listener): () => void {
       }
 
       const playback = readPlaybackState(lastPagePlayerTrack);
+      if (
+        !shouldSuppressLocalEvents() &&
+        endStalls.observe(playback, Date.now(), media?.ended ?? false)
+      ) {
+        transitions.recordEnded(playback);
+        listener({ type: "local.ended", playback });
+      }
       const transition = transitions.observe(playback);
       if (
         transition === "ended" ||
