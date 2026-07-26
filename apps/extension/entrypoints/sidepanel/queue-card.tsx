@@ -78,8 +78,15 @@ export function QueueCard({
   }
 
   return (
-    <section className="card stack">
-      <p className="label">Queue</p>
+    <section className="card section-card" aria-labelledby="queue-heading">
+      <div className="section-heading">
+        <h2 className="section-title" id="queue-heading">
+          Queue
+        </h2>
+        {state?.queue.length ? (
+          <span className="count-badge">{state.queue.length}</span>
+        ) : null}
+      </div>
       {state?.queue.length ? (
         <ol className="queue">
           {state.queue.map((item, index) => (

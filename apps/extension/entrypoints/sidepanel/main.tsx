@@ -2,10 +2,14 @@ import React from "react";
 import { createRoot } from "react-dom/client";
 import type { RoomPermissions } from "@ytm-party/shared";
 import "./styles.css";
+import { FeedbackToast } from "./feedback-toast";
 import { InviteCodeButton } from "./invite-code-button";
+import { NowPlayingCard } from "./now-playing-card";
 import { PartySetupCard } from "./party-setup-card";
 import { PermissionToggle } from "./permission-toggle";
 import { QueueCard } from "./queue-card";
+import { RoomHeader } from "./room-header";
+import { presentSyncStatus } from "./room-presentation";
 import { usePendingInvite } from "./use-pending-invite";
 import { usePartySession } from "./use-party-session";
 
@@ -35,26 +39,34 @@ function App() {
   }
 
   return (
-    <main className="panel">
-      <section className="hero">
-        <p className="eyebrow">TogetherTune</p>
-        <h1>Listen together without passing the aux cord around.</h1>
-        <p className="muted">Create a room, share a code, and keep everyone on the same track.</p>
-      </section>
+    <main className={`panel ${view.roomId ? "active-room" : "setup-room"}`}>
+      {!view.roomId ? (
+        <section className="hero">
+          <p className="eyebrow">TogetherTune</p>
+          <h1>Listen together without passing the aux cord around.</h1>
+          <p className="muted">
+            Create a room, share a code, and keep everyone on the same track.
+          </p>
+        </section>
+      ) : (
+        <RoomHeader
+          inviteCode={view.state?.inviteCode ?? "------"}
+          listenerCount={view.state?.participants.length ?? null}
+          localSyncStatus={view.localSyncStatus}
+          pendingAction={pendingAction}
+          onLeave={() =>
+            void act("leave", { type: "party.leave" }, "You left the party.")
+          }
+        />
+      )}
 
       {view.roomId ? (
-        <section className="card stack">
-          <div className="party-heading-row">
-            <p className="label">Invite</p>
-            <button
-              className="leave-party compact"
-              disabled={Boolean(pendingAction)}
-              onClick={() =>
-                act("leave", { type: "party.leave" }, "You left the party.")
-              }
-            >
-              {pendingAction === "leave" ? "Leaving..." : "Leave party"}
-            </button>
+        <section className="room-invite" aria-labelledby="invite-heading">
+          <div>
+            <p className="label" id="invite-heading">
+              Invite listeners
+            </p>
+            <p className="room-invite-help">Share this room code to listen together.</p>
           </div>
           <InviteCodeButton
             inviteCode={view.state?.inviteCode ?? "------"}
@@ -64,14 +76,19 @@ function App() {
         </section>
       ) : null}
 
-      {feedback ? (
-        <button
-          className={`notice ${feedback.kind}`}
-          onClick={clearFeedback}
-          aria-live="polite"
-        >
-          {feedback.message}
-        </button>
+      {feedback?.kind === "error" ? (
+        <div className="notice error dismissible-notice" role="alert">
+          <span>{feedback.message}</span>
+          <button
+            type="button"
+            aria-label="Dismiss error"
+            onClick={clearFeedback}
+          >
+            <svg aria-hidden="true" viewBox="0 0 24 24">
+              <path d="m7 7 10 10M17 7 7 17" />
+            </svg>
+          </button>
+        </div>
       ) : null}
       {!feedback && view.lastError ? (
         <p className="notice error" aria-live="polite">
@@ -100,100 +117,75 @@ function App() {
               joining a different one.
             </p>
           ) : null}
-          <section className="card stack status-card">
-            <div className="status-row">
-              <div>
-                <p className="label">Status</p>
-                <strong>{view.localSyncStatus.replaceAll("_", " ")}</strong>
-              </div>
-              {view.localSyncStatus === "ready_to_join" ? (
-                <button
-                  className="primary"
-                  disabled={Boolean(pendingAction)}
-                  onClick={() =>
-                    act(
-                      "join-playback",
-                      { type: "party.joinPlayback" },
-                      "Playback joined.",
-                    )
-                  }
-                >
-                  {pendingAction === "join-playback" ? "Joining..." : "Join playback"}
-                </button>
-              ) : null}
-              {view.localSyncStatus === "out_of_sync" ||
-              view.localSyncStatus === "track_unavailable" ? (
-                <button
-                  className="primary"
-                  disabled={Boolean(pendingAction)}
-                  onClick={() =>
-                    act(
-                      "rejoin-playback",
-                      { type: "party.rejoinPlayback" },
-                      "Playback synchronized.",
-                    )
-                  }
-                >
-                  {pendingAction === "rejoin-playback"
-                    ? "Rejoining..."
-                    : "Rejoin playback"}
-                </button>
-              ) : null}
-              {view.localSyncStatus === "ready_to_resume" &&
-              pendingAction !== "resume-playback" ? (
-                <button
-                  className="primary"
-                  disabled={Boolean(pendingAction)}
-                  onClick={() =>
-                    act(
-                      "resume-playback",
-                      { type: "party.resumePlayback" },
-                      "Playback resumed.",
-                    )
-                  }
-                >
-                  Resume
-                </button>
-              ) : null}
+          <NowPlayingCard
+            state={view.state}
+            localSyncStatus={view.localSyncStatus}
+            canSkip={canSkip}
+            pendingAction={pendingAction}
+            act={act}
+          />
+
+          <QueueCard
+            state={view.state}
+            canReorder={canReorderQueue}
+            canRemove={canRemoveFromQueue}
+            pendingAction={pendingAction}
+            act={act}
+          />
+
+          <section className="card section-card" aria-labelledby="participants-heading">
+            <div className="section-heading">
+              <h2 className="section-title" id="participants-heading">
+                Participants
+              </h2>
+              <span className="count-badge">
+                {view.state?.participants.length ?? 0}
+              </span>
             </div>
-            <div className="now-playing-row">
-              <p className="now-playing">
-                {view.state?.playback.track?.title ?? "No song selected yet"}
-                {view.state?.playback.track?.artist ? (
-                  <span> by {view.state.playback.track.artist}</span>
-                ) : null}
-              </p>
-              <button
-                className="compact"
-                disabled={!canSkip || Boolean(pendingAction)}
-                title={
-                  canSkip
-                    ? "Play the next queued song"
-                    : "The host has disabled guest skipping"
-                }
-                onClick={() =>
-                  act("skip", { type: "party.skip" }, "Skipped to the next song.")
-                }
-              >
-                Skip
-              </button>
-            </div>
+            <ul className="participants">
+              {view.state?.participants.map((participant) => {
+                const status = presentSyncStatus(participant.syncStatus);
+                return (
+                  <li className="participant" key={participant.participantId}>
+                    <span className="participant-identity">
+                      <span className="participant-avatar" aria-hidden="true">
+                        {participant.displayName.trim().charAt(0).toUpperCase() ||
+                          "?"}
+                      </span>
+                      <span className="participant-name">
+                        <strong>{participant.displayName}</strong>
+                        <small>
+                          {participant.role === "host" ? "Host" : "Listener"}
+                        </small>
+                      </span>
+                    </span>
+                    <span
+                      className={`participant-status tone-${status.tone}`}
+                      title={status.label}
+                    >
+                      <span className="status-dot" aria-hidden="true" />
+                      <span>{status.label}</span>
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
           </section>
 
           {isHost && view.state ? (
-            <section className="card stack">
-              <p className="label">Guest permissions</p>
+            <details className="card permissions-card">
+              <summary>
+                <span className="permissions-summary-copy">
+                  <span className="section-title">Guest permissions</span>
+                  <small>Choose who can control the room</small>
+                </span>
+                <svg aria-hidden="true" viewBox="0 0 24 24">
+                  <path d="m8 10 4 4 4-4" />
+                </svg>
+              </summary>
               <div className="permission-options">
                 <PermissionToggle
-                  label="Skip songs"
-                  checked={view.state.permissions.guestsCanSkip}
-                  disabled={Boolean(pendingAction)}
-                  onChange={(guestsCanSkip) =>
-                    updatePermissions({ ...view.state!.permissions, guestsCanSkip })
-                  }
-                />
-                <PermissionToggle
-                  label="Add songs"
+                  label="Allow guests to add songs"
                   checked={view.state.permissions.guestsCanAddToQueue}
                   disabled={Boolean(pendingAction)}
                   onChange={(guestsCanAddToQueue) =>
@@ -204,7 +196,18 @@ function App() {
                   }
                 />
                 <PermissionToggle
-                  label="Delete songs"
+                  label="Allow guests to skip songs"
+                  checked={view.state.permissions.guestsCanSkip}
+                  disabled={Boolean(pendingAction)}
+                  onChange={(guestsCanSkip) =>
+                    updatePermissions({
+                      ...view.state!.permissions,
+                      guestsCanSkip,
+                    })
+                  }
+                />
+                <PermissionToggle
+                  label="Allow guests to remove songs"
                   checked={view.state.permissions.guestsCanRemoveFromQueue}
                   disabled={Boolean(pendingAction)}
                   onChange={(guestsCanRemoveFromQueue) =>
@@ -215,30 +218,13 @@ function App() {
                   }
                 />
               </div>
-            </section>
+            </details>
           ) : null}
-
-          <QueueCard
-            state={view.state}
-            canReorder={canReorderQueue}
-            canRemove={canRemoveFromQueue}
-            pendingAction={pendingAction}
-            act={act}
-          />
-
-          <section className="card stack">
-            <p className="label">Participants</p>
-            {view.state?.participants.map((participant) => (
-              <p className="participant" key={participant.participantId}>
-                <span>{participant.displayName}</span>
-                <small>
-                  {participant.role} · {participant.syncStatus.replaceAll("_", " ")}
-                </small>
-              </p>
-            ))}
-          </section>
         </>
       )}
+      {feedback?.kind === "success" ? (
+        <FeedbackToast feedback={feedback} onDismiss={clearFeedback} />
+      ) : null}
       <footer className="footer">
         <span>Independent and not affiliated with Google or YouTube.</span>
         <a
@@ -258,7 +244,6 @@ function App() {
       </footer>
     </main>
   );
-
 }
 
 createRoot(document.getElementById("root")!).render(<App />);

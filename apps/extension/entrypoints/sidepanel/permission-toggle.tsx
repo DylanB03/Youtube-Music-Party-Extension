@@ -12,14 +12,18 @@ export function PermissionToggle({
   onChange,
 }: PermissionToggleProps) {
   return (
-    <label className="toggle">
-      <input
-        type="checkbox"
-        checked={checked}
-        disabled={disabled}
-        onChange={(event) => onChange(event.target.checked)}
-      />
-      <span>{label}</span>
+    <label className={`toggle ${disabled ? "disabled" : ""}`}>
+      <span className="toggle-label">{label}</span>
+      <span className="switch">
+        <input
+          type="checkbox"
+          role="switch"
+          checked={checked}
+          disabled={disabled}
+          onChange={(event) => onChange(event.target.checked)}
+        />
+        <span className="switch-control" aria-hidden="true" />
+      </span>
     </label>
   );
 }

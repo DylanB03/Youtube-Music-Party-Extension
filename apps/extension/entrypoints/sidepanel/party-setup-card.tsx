@@ -32,7 +32,13 @@ export function PartySetupCard({
   }
 
   return (
-    <section className="card stack">
+    <section className="card stack setup-card" aria-labelledby="setup-heading">
+      <div>
+        <p className="label">Get started</p>
+        <h2 className="setup-title" id="setup-heading">
+          Start a listening party
+        </h2>
+      </div>
       {pendingInvite ? (
         <div className="prepared-invite">
           <div>
