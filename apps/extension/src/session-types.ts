@@ -20,6 +20,7 @@ export type ConnectionState =
   | "connecting"
   | "connected"
   | "reconnecting"
+  | "failed"
   | "closed"
   | "expired";
 

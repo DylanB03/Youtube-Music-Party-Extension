@@ -77,7 +77,7 @@ export function RoomHeader({
                 className="room-menu-danger"
                 type="button"
                 role="menuitem"
-                disabled={Boolean(pendingAction)}
+                disabled={pendingAction === "leave"}
                 onClick={() => {
                   setMenuOpen(false);
                   onLeave();

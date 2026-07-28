@@ -18,6 +18,8 @@ export function presentSyncStatus(status: SyncStatus): StatusPresentation {
       return { label: "Syncing", tone: "warning" };
     case "reconnecting":
       return { label: "Reconnecting", tone: "warning" };
+    case "connection_failed":
+      return { label: "Connection unavailable", tone: "danger" };
     case "ready_to_join":
       return { label: "Ready to join", tone: "warning" };
     case "ready_to_resume":
@@ -45,7 +47,8 @@ export function summarizePartySync(
   const needingAttention = participants.filter(
     (participant) =>
       participant.syncStatus === "out_of_sync" ||
-      participant.syncStatus === "track_unavailable",
+      participant.syncStatus === "track_unavailable" ||
+      participant.syncStatus === "connection_failed",
   ).length;
   if (needingAttention > 0) {
     return {

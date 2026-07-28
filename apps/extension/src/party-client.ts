@@ -17,6 +17,8 @@ type ErrorListener = (message: string) => void;
 type ConnectionStateListener = (state: ConnectionState) => void;
 const OPERATION_TIMEOUT_MS = 15_000;
 const CLOCK_RESYNC_INTERVAL_MS = 5 * 60_000;
+const SOCKET_OPEN_TIMEOUT_MS = 10_000;
+const RECONNECT_FAILURE_AFTER_MS = 2 * 60_000;
 
 export class PartyClient {
   private socket: WebSocket | null = null;
@@ -30,6 +32,8 @@ export class PartyClient {
   private reconnectAttempt = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private pingTimer: ReturnType<typeof setTimeout> | null = null;
+  private socketOpenTimer: ReturnType<typeof setTimeout> | null = null;
+  private reconnectStartedAtMs: number | null = null;
   private opening = false;
   clockOffsetMs = 0;
 
@@ -49,7 +53,9 @@ export class PartyClient {
   connect(): void {
     if (this.opening || (this.socket && this.socket.readyState <= WebSocket.OPEN)) return;
     this.intentionallyClosed = false;
-    this.emitConnectionState(this.reconnectAttempt > 0 ? "reconnecting" : "connecting");
+    this.emitConnectionState(
+      this.reconnectAttempt > 0 ? this.reconnectState() : "connecting",
+    );
     this.opening = true;
     void this.openSocket();
   }
@@ -75,22 +81,34 @@ export class PartyClient {
       this.opening = false;
       return;
     }
-    const url = wsUrl(
-      `/rooms/${this.roomId}/connect?ticket=${encodeURIComponent(ticket)}`,
-    );
-    this.socket = new WebSocket(url);
-    this.socket.addEventListener("open", () => {
+    const url = wsUrl(`/rooms/${this.roomId}/connect?ticket=${encodeURIComponent(ticket)}`);
+    let socket: WebSocket;
+    try {
+      socket = new WebSocket(url);
+    } catch {
+      this.opening = false;
+      this.emitError("Party connection failed.");
+      this.scheduleReconnect();
+      return;
+    }
+    this.socket = socket;
+    socket.addEventListener("open", () => {
+      if (this.socket !== socket) return;
+      this.clearSocketOpenTimer();
       this.opening = false;
       this.reconnectAttempt = 0;
+      this.reconnectStartedAtMs = null;
       this.emitConnectionState("connected");
       this.resendPendingOperations();
       this.flushPendingMessages();
       this.send({ type: "room.snapshot.request" });
       this.syncClockAndScheduleRefresh();
     });
-    this.socket.addEventListener("message", (event) => this.handleMessage(event.data));
-    this.socket.addEventListener("error", () => this.emitError("Party connection failed."));
-    this.socket.addEventListener("close", (event) => {
+    socket.addEventListener("message", (event) => this.handleMessage(event.data));
+    socket.addEventListener("error", () => this.emitError("Party connection failed."));
+    socket.addEventListener("close", (event) => {
+      if (this.socket !== socket) return;
+      this.clearSocketOpenTimer();
       this.opening = false;
       this.socket = null;
       if (event.code === 1001 && event.reason === "Party expired") {
@@ -104,6 +122,14 @@ export class PartyClient {
         this.scheduleReconnect();
       }
     });
+    this.socketOpenTimer = setTimeout(() => {
+      if (this.socket !== socket || socket.readyState !== WebSocket.CONNECTING) return;
+      this.socket = null;
+      this.opening = false;
+      this.emitError("Party connection timed out.");
+      socket.close();
+      this.scheduleReconnect();
+    }, SOCKET_OPEN_TIMEOUT_MS);
   }
 
   disconnect(): void {
@@ -113,6 +139,8 @@ export class PartyClient {
     this.reconnectTimer = null;
     if (this.pingTimer) clearTimeout(this.pingTimer);
     this.pingTimer = null;
+    this.clearSocketOpenTimer();
+    this.reconnectStartedAtMs = null;
     this.socket?.close();
     this.socket = null;
     this.pendingMessages = [];
@@ -198,14 +226,33 @@ export class PartyClient {
 
   private scheduleReconnect(): void {
     if (this.intentionallyClosed || this.reconnectTimer) return;
+    this.reconnectStartedAtMs ??= Date.now();
     this.reconnectAttempt += 1;
     const exponentialDelay = 500 * 2 ** Math.min(this.reconnectAttempt - 1, 6);
     const jitter = Math.floor(Math.random() * 250);
-    this.emitConnectionState("reconnecting");
+    const state = this.reconnectState();
+    if (state === "failed") {
+      this.emitError(
+        "Reconnection is taking longer than expected. Automatic retries will continue.",
+      );
+    }
+    this.emitConnectionState(state);
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       this.connect();
     }, Math.min(exponentialDelay + jitter, 30_000));
+  }
+
+  private reconnectState(): Extract<ConnectionState, "reconnecting" | "failed"> {
+    return this.reconnectStartedAtMs !== null &&
+      Date.now() - this.reconnectStartedAtMs >= RECONNECT_FAILURE_AFTER_MS
+      ? "failed"
+      : "reconnecting";
+  }
+
+  private clearSocketOpenTimer(): void {
+    if (this.socketOpenTimer) clearTimeout(this.socketOpenTimer);
+    this.socketOpenTimer = null;
   }
 
   private resendPendingOperations(): void {

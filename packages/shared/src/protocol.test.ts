@@ -38,8 +38,9 @@ describe("protocol limits", () => {
 });
 
 describe("sync status validation", () => {
-  it("accepts the ready_to_resume status", () => {
+  it("accepts recovery statuses", () => {
     expect(isSyncStatus("ready_to_resume")).toBe(true);
+    expect(isSyncStatus("connection_failed")).toBe(true);
   });
 
   it("rejects unknown sync statuses", () => {

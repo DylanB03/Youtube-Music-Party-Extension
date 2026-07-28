@@ -6,6 +6,9 @@ import type {
 } from "@ytm-party/shared";
 import { apiUrl } from "./config";
 
+const CONNECTION_REQUEST_TIMEOUT_MS = 10_000;
+const LEAVE_REQUEST_TIMEOUT_MS = 5_000;
+
 export class PartyApiError extends Error {
   constructor(
     readonly status: number,
@@ -58,6 +61,7 @@ export class PartyApi {
   ): Promise<ConnectionTicketResponse> {
     const response = await fetch(apiUrl(`/rooms/${encodeURIComponent(roomId)}/tickets`), {
       method: "POST",
+      signal: AbortSignal.timeout(CONNECTION_REQUEST_TIMEOUT_MS),
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${participantToken}`,
@@ -69,7 +73,12 @@ export class PartyApi {
         response,
         "Could not authorize the party connection.",
       );
-      if (response.status === 404 || response.status === 409 || response.status === 410) {
+      if (
+        response.status === 401 ||
+        response.status === 404 ||
+        response.status === 409 ||
+        response.status === 410
+      ) {
         throw new PartyExpiredError(message);
       }
       throw new PartyApiError(response.status, message);
@@ -84,6 +93,7 @@ export class PartyApi {
   ): Promise<void> {
     const response = await fetch(apiUrl(`/rooms/${encodeURIComponent(roomId)}/leave`), {
       method: "POST",
+      signal: AbortSignal.timeout(LEAVE_REQUEST_TIMEOUT_MS),
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${participantToken}`,

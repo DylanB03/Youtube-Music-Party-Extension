@@ -340,7 +340,7 @@ describe("party controller orchestration", () => {
     expect(view.localSyncStatus).toBe("not_joined");
   });
 
-  it("falls back to in-room leave if the HTTP leave endpoint cannot be reached", async () => {
+  it("clears the local session if the leave endpoint cannot be reached", async () => {
     const credentials: StoredSession = {
       roomId: "room",
       participantId: "guest",
@@ -372,15 +372,15 @@ describe("party controller orchestration", () => {
 
     await controller.leaveParty();
 
-    expect(connection.sent).toContainEqual({
-      type: "participant.leave",
-      operationId: expect.any(String),
-      expectedRevision: 2,
-    });
+    expect(connection.sent).not.toContainEqual(
+      expect.objectContaining({ type: "participant.leave" }),
+    );
+    expect(connection.disconnects).toBe(1);
     expect(storage.saved).toBeNull();
+    expect(controller.getView().localSyncStatus).toBe("not_joined");
   });
 
-  it("does not send a websocket leave to a backend missing the leave endpoint", async () => {
+  it("still leaves locally when the backend is missing the leave endpoint", async () => {
     const credentials: StoredSession = {
       roomId: "room",
       participantId: "guest",
@@ -410,14 +410,51 @@ describe("party controller orchestration", () => {
     await controller.initialize();
     connection.emitSnapshot(roomState());
 
-    await expect(controller.leaveParty()).rejects.toThrow(
-      "This backend does not support instant leave yet",
-    );
+    await controller.leaveParty();
 
     expect(connection.sent).not.toContainEqual(
       expect.objectContaining({ type: "participant.leave" }),
     );
-    expect(storage.saved).toEqual(credentials);
+    expect(connection.disconnects).toBe(1);
+    expect(storage.saved).toBeNull();
+    expect(controller.getView().localSyncStatus).toBe("not_joined");
+  });
+
+  it("does not wait for a permanently hung leave request", async () => {
+    const credentials: StoredSession = {
+      roomId: "room",
+      participantId: "guest",
+      participantToken: "token",
+      displayName: "Guest",
+      localSyncStatus: "reconnecting",
+    };
+    const connection = new FakeConnection();
+    const storage = new FakeStorage(credentials);
+    const controller = new PartyController(
+      {
+        async createRoom() {
+          throw new Error("Not used");
+        },
+        async joinRoom() {
+          throw new Error("Not used");
+        },
+        async leaveRoom() {
+          await new Promise<never>(() => undefined);
+        },
+      },
+      storage,
+      new FakeTabs(),
+      () => connection,
+      () => undefined,
+    );
+    await controller.initialize();
+
+    const view = await controller.leaveParty();
+
+    expect(view.localSyncStatus).toBe("not_joined");
+    expect(view.roomId).toBeNull();
+    expect(connection.disconnects).toBe(1);
+    expect(storage.saved).toBeNull();
   });
 
   it("lets a guest Resume button rejoin playback instead of skipping the queue", async () => {
@@ -1712,6 +1749,29 @@ describe("party controller orchestration", () => {
       roomId: null,
       localSyncStatus: "not_joined",
       lastError: "This party has expired. Create or join another party.",
+    });
+  });
+
+  it("surfaces prolonged reconnect failures without discarding a retryable session", async () => {
+    const { controller, connection } = await createGuestController();
+
+    connection.emitConnectionState("reconnecting");
+    connection.emitConnectionState("failed");
+    await flushControllerWork();
+
+    expect(controller.getView()).toMatchObject({
+      roomId: "room",
+      localSyncStatus: "connection_failed",
+      lastError: expect.stringContaining("Automatic retries will continue"),
+    });
+
+    connection.emitConnectionState("connected");
+    await flushControllerWork();
+
+    expect(controller.getView()).toMatchObject({
+      roomId: "room",
+      localSyncStatus: "in_sync",
+      lastError: undefined,
     });
   });
 });

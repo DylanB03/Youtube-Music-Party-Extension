@@ -10,6 +10,7 @@ export type Env = Cloudflare.Env & {
   MAX_DISPLAY_NAME_LENGTH?: string;
   ROOM_MAX_AGE_MS?: string;
   ROOM_IDLE_TTL_MS?: string;
+  ROOM_EMPTY_TTL_MS?: string;
   INVITE_TTL_SECONDS?: string;
 };
 

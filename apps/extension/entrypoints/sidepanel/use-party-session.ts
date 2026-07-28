@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ExtensionRequest } from "@ytm-party/shared";
 import { browser } from "../../src/browser";
 import { sendExtensionRequest } from "../../src/extension-messaging";
@@ -27,6 +27,7 @@ export function usePartySession() {
   const [view, setView] = useState<SessionView>(initialView);
   const [pendingAction, setPendingAction] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<PartyFeedback | null>(null);
+  const actionGeneration = useRef(0);
 
   useEffect(() => {
     void refresh();
@@ -63,12 +64,16 @@ export function usePartySession() {
     request: ExtensionRequest,
     successMessage?: string,
   ): Promise<boolean> {
-    if (pendingAction) return false;
+    const isEmergencyLeave = request.type === "party.leave";
+    if (pendingAction && !isEmergencyLeave) return false;
+    const generation = actionGeneration.current + 1;
+    actionGeneration.current = generation;
     setPendingAction(actionName);
     setFeedback(null);
 
     try {
       const response = await sendExtensionRequest<SessionView>(request);
+      if (generation !== actionGeneration.current) return false;
       if (!response.ok) {
         setFeedback({ kind: "error", message: response.error });
         return false;
@@ -80,13 +85,16 @@ export function usePartySession() {
       }
       return true;
     } catch {
+      if (generation !== actionGeneration.current) return false;
       setFeedback({
         kind: "error",
         message: "The action could not reach the extension service worker.",
       });
       return false;
     } finally {
-      setPendingAction(null);
+      if (generation === actionGeneration.current) {
+        setPendingAction(null);
+      }
     }
   }
 

@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import type { ConnectionState } from "./session-types";
+import { PartyExpiredError } from "./party-api";
 import { PartyClient } from "./party-client";
 
 type SocketEvent = "open" | "message" | "error" | "close";
@@ -48,6 +50,7 @@ describe("PartyClient clock synchronization", () => {
     FakeWebSocket.instances.length = 0;
     vi.useRealTimers();
     vi.unstubAllGlobals();
+    vi.restoreAllMocks();
   });
 
   it("syncs on connection and refreshes no more than once every five minutes", async () => {
@@ -82,6 +85,59 @@ describe("PartyClient clock synchronization", () => {
       socket.sentMessages.filter((message) => JSON.parse(message).type === "clock.ping"),
     ).toHaveLength(2);
 
+    client.disconnect();
+  });
+
+  it("marks invalid participant credentials as an expired session", async () => {
+    vi.stubGlobal("WebSocket", FakeWebSocket);
+    const states: ConnectionState[] = [];
+    const client = new PartyClient("party-id", async () => {
+      throw new PartyExpiredError("Participant is no longer active");
+    });
+    client.onConnectionState((state) => states.push(state));
+
+    client.connect();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(states).toEqual(["connecting", "expired"]);
+    expect(FakeWebSocket.instances).toHaveLength(0);
+  });
+
+  it("stops presenting an endless reconnect after two minutes", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("WebSocket", FakeWebSocket);
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    const states: ConnectionState[] = [];
+    const client = new PartyClient("party-id", async () => {
+      throw new Error("Network unavailable");
+    });
+    client.onConnectionState((state) => states.push(state));
+
+    client.connect();
+    await Promise.resolve();
+    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(122_000);
+
+    expect(states).toContain("failed");
+    client.disconnect();
+  });
+
+  it("times out a WebSocket that never opens and retries", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("WebSocket", FakeWebSocket);
+    const states: ConnectionState[] = [];
+    const client = new PartyClient("party-id", async () => "socket-ticket");
+    client.onConnectionState((state) => states.push(state));
+
+    client.connect();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(FakeWebSocket.instances).toHaveLength(1);
+
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    expect(states).toContain("reconnecting");
     client.disconnect();
   });
 });

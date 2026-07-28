@@ -10,6 +10,7 @@ describe("room presentation", () => {
     ["in_sync", "In sync", "success"],
     ["ready_to_join", "Ready to join", "warning"],
     ["out_of_sync", "Out of sync", "danger"],
+    ["connection_failed", "Connection unavailable", "danger"],
     ["not_joined", "Not joined", "neutral"],
   ] satisfies Array<[SyncStatus, string, string]>)(
     "presents %s as readable UI copy",
@@ -32,6 +33,15 @@ describe("room presentation", () => {
       summarizePartySync([
         participant("host", "in_sync"),
         participant("guest", "out_of_sync"),
+      ]),
+    ).toEqual({ label: "1 listener needs attention", tone: "danger" });
+  });
+
+  it("treats failed connections as needing attention", () => {
+    expect(
+      summarizePartySync([
+        participant("host", "in_sync"),
+        participant("guest", "connection_failed"),
       ]),
     ).toEqual({ label: "1 listener needs attention", tone: "danger" });
   });

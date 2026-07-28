@@ -3,6 +3,7 @@ import type { PartyRoomState } from "@ytm-party/shared";
 export type RoomLifecycle = {
   maxAgeMs: number;
   idleTtlMs: number;
+  emptyTtlMs: number;
 };
 
 export function nextRoomExpirationAtMs(
@@ -14,8 +15,14 @@ export function nextRoomExpirationAtMs(
   const lastActivityAtMs = state.lastActivityAtMs ?? createdAtMs;
   const absoluteExpiration =
     state.expiresAtMs ?? createdAtMs + lifecycle.maxAgeMs;
-  if (hasConnections) return absoluteExpiration;
-  return Math.min(absoluteExpiration, lastActivityAtMs + lifecycle.idleTtlMs);
+  const expirationCandidates = [absoluteExpiration];
+  if (!hasConnections) {
+    expirationCandidates.push(lastActivityAtMs + lifecycle.idleTtlMs);
+  }
+  if (!state.playback.track && state.queue.length === 0) {
+    expirationCandidates.push(lastActivityAtMs + lifecycle.emptyTtlMs);
+  }
+  return Math.min(...expirationCandidates);
 }
 
 export function roomShouldExpire(

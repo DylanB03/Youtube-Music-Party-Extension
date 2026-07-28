@@ -15,7 +15,6 @@ import {
   playbackKey,
 } from "./playback-policy";
 import { isNearTrackEnd, looksLikeNaturalTrackAdvance } from "./youtube-music/playback-transition";
-import { PartyApiError } from "./party-api";
 import type { PlaybackApplicationResult } from "./playback-application";
 import { PartyMutationCoordinator } from "./party-mutation-coordinator";
 import {
@@ -24,6 +23,7 @@ import {
 } from "./playback-synchronizer";
 import type {
   ActiveSession,
+  ConnectionState,
   MutationMessage,
   PartyConnection,
   SessionView,
@@ -145,66 +145,28 @@ export class PartyController {
 
   async leaveParty(): Promise<SessionView> {
     const session = this.session;
-    if (session) {
-      await this.leaveRemoteParty(session);
-    }
+    // Start remote cleanup while the credentials are still available, but
+    // never let network or room state gate the user's local escape hatch.
+    const remoteLeave = session
+      ? this.api
+          .leaveRoom(
+            session.roomId,
+            session.participantId,
+            session.participantToken,
+          )
+          .catch(() => undefined)
+      : null;
+
     this.resetPlaybackRuntimeState();
-    this.session?.client.disconnect();
     this.session = null;
+    session?.client.disconnect();
     this.terminalError = undefined;
     this.partyTabId = null;
     this.mutations.reset();
-    await this.storage.clear();
     this.publishState();
+    await this.storage.clear();
+    void remoteLeave;
     return this.getView();
-  }
-
-  private async leaveRemoteParty(session: ActiveSession): Promise<void> {
-    let httpError: unknown;
-
-    try {
-      await this.api.leaveRoom(
-        session.roomId,
-        session.participantId,
-        session.participantToken,
-      );
-      return;
-    } catch (error) {
-      httpError = error;
-      if (error instanceof PartyApiError && error.status === 404) {
-        const message =
-          "This backend does not support instant leave yet. Deploy the latest backend, then try again.";
-        session.lastError = message;
-        this.publishState();
-        throw new Error(message);
-      }
-    }
-
-    try {
-      if (!session.state) throw new Error("Room snapshot is not ready yet.");
-      const result = await this.mutations.execute(
-        session.client,
-        this.requireRevision(),
-        (operationId, expectedRevision) => ({
-          type: "participant.leave",
-          operationId,
-          expectedRevision,
-        }),
-      );
-      if (!result.accepted) {
-        throw new Error(result.error?.message ?? "The room rejected the leave request.");
-      }
-    } catch (error) {
-      const message =
-        error instanceof Error
-          ? error.message
-          : httpError instanceof Error
-            ? httpError.message
-            : "Could not leave party.";
-      session.lastError = message;
-      this.publishState();
-      throw new Error(message);
-    }
   }
 
   async joinPlayback(): Promise<SessionView> {
@@ -396,7 +358,8 @@ export class PartyController {
       client,
       state: null,
       resumeSyncStatus:
-        credentials.localSyncStatus === "reconnecting"
+        credentials.localSyncStatus === "reconnecting" ||
+        credentials.localSyncStatus === "connection_failed"
           ? "ready_to_join"
           : credentials.localSyncStatus,
     };
@@ -468,7 +431,7 @@ export class PartyController {
   }
 
   private async handleConnectionState(
-    state: "connecting" | "connected" | "reconnecting" | "closed" | "expired",
+    state: ConnectionState,
   ): Promise<void> {
     const session = this.session;
     if (!session) return;
@@ -485,17 +448,32 @@ export class PartyController {
       return;
     }
 
-    if (state === "reconnecting") {
-      if (session.localSyncStatus !== "reconnecting") {
+    if (state === "reconnecting" || state === "failed") {
+      if (
+        session.localSyncStatus !== "reconnecting" &&
+        session.localSyncStatus !== "connection_failed"
+      ) {
         session.resumeSyncStatus = session.localSyncStatus;
       }
-      session.localSyncStatus = "reconnecting";
+      session.localSyncStatus =
+        state === "failed" ? "connection_failed" : "reconnecting";
+      if (state === "failed") {
+        session.lastError =
+          "Could not reconnect to this party. Automatic retries will continue, or you can leave and start a new session.";
+      }
       this.publishState();
       return;
     }
 
-    if (state !== "connected" || session.localSyncStatus !== "reconnecting") return;
+    if (
+      state !== "connected" ||
+      (session.localSyncStatus !== "reconnecting" &&
+        session.localSyncStatus !== "connection_failed")
+    ) {
+      return;
+    }
     session.localSyncStatus = session.resumeSyncStatus;
+    session.lastError = undefined;
     session.client.send({
       type: "participant.status",
       syncStatus: session.localSyncStatus,

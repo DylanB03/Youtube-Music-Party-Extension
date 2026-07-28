@@ -6,6 +6,7 @@ export type SyncStatus =
   | "ready_to_resume"
   | "navigating"
   | "reconnecting"
+  | "connection_failed"
   | "in_sync"
   | "out_of_sync"
   | "track_unavailable";
@@ -359,6 +360,7 @@ export function isSyncStatus(value: unknown): value is SyncStatus {
     value === "ready_to_resume" ||
     value === "navigating" ||
     value === "reconnecting" ||
+    value === "connection_failed" ||
     value === "in_sync" ||
     value === "out_of_sync" ||
     value === "track_unavailable"

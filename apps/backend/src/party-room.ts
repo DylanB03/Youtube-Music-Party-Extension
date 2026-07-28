@@ -43,6 +43,7 @@ const PARTICIPANT_RETENTION_MS = 5 * 60_000;
 const CONNECTION_TICKET_TTL_MS = 30_000;
 const DEFAULT_ROOM_MAX_AGE_MS = 24 * 60 * 60 * 1_000;
 const DEFAULT_ROOM_IDLE_TTL_MS = 60 * 60 * 1_000;
+const DEFAULT_ROOM_EMPTY_TTL_MS = 10 * 60 * 1_000;
 
 export class PartyRoom {
   private readonly connections: RoomConnections;
@@ -390,6 +391,9 @@ export class PartyRoom {
     // Persist mutated per-connection rate-limit counters so they survive
     // Durable Object hibernation between messages.
     this.connections.rememberMeta(socket, session);
+    // Mutations can start or end the truly-empty-room window, so always
+    // recalculate the single lifecycle alarm after handling a message.
+    await this.scheduleNextPresenceAlarm();
   }
 
   private async disconnect(socket: WebSocket): Promise<void> {
@@ -471,6 +475,10 @@ export class PartyRoom {
       idleTtlMs: readPositiveInteger(
         this.env.ROOM_IDLE_TTL_MS,
         DEFAULT_ROOM_IDLE_TTL_MS,
+      ),
+      emptyTtlMs: readPositiveInteger(
+        this.env.ROOM_EMPTY_TTL_MS,
+        DEFAULT_ROOM_EMPTY_TTL_MS,
       ),
     };
   }
