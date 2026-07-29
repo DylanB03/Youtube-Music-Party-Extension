@@ -4,6 +4,10 @@ import type {
   PartyPlaybackState,
   Track,
 } from "@ytm-party/shared";
+import {
+  currentPlaybackPositionSeconds,
+  DRIFT_IGNORE_SECONDS,
+} from "@ytm-party/shared";
 import type { PlaybackApplicationResult } from "./playback-application";
 import { loadTrack, waitForMedia } from "./youtube-music/navigation";
 import {
@@ -28,6 +32,10 @@ let lastInterruption: LocalPlaybackState["interruption"];
 let suppressLocalEventsUntilMs = 0;
 let activePlaybackApplications = 0;
 let lastPagePlayerTrack: Track | null = null;
+let playbackRateResetTimer: number | null = null;
+
+const MEDIA_READY_TIMEOUT_MS = 8_000;
+const MEDIA_SEEK_TIMEOUT_MS = 2_000;
 
 export async function applyPlayback(
   playback: PartyPlaybackState,
@@ -36,6 +44,7 @@ export async function applyPlayback(
   suppressLocalEventsUntilMs = Date.now() + 2500;
 
   try {
+    resetPlaybackRate();
     if (!playback.track) {
       await pauseLocalPlayback();
       return "applied";
@@ -44,10 +53,25 @@ export async function applyPlayback(
     await loadTrack(playback.track.videoId);
 
     const media = await waitForMedia();
-    media.currentTime = Math.max(0, playback.positionSeconds);
+    media.pause();
+    await waitForPlayableMedia(media);
+    await seekMedia(
+      media,
+      currentPlaybackPositionSeconds(playback, Date.now()),
+    );
     if (playback.paused) {
-      media.pause();
+      return "applied";
     } else {
+      const startDelayMs = playback.effectiveAtMs - Date.now();
+      if (startDelayMs > 0) {
+        await delay(startDelayMs);
+      }
+      if (Date.now() - playback.effectiveAtMs > DRIFT_IGNORE_SECONDS * 1_000) {
+        await seekMedia(
+          media,
+          currentPlaybackPositionSeconds(playback, Date.now()),
+        );
+      }
       await media.play();
     }
     return "applied";
@@ -55,6 +79,24 @@ export async function applyPlayback(
     activePlaybackApplications = Math.max(0, activePlaybackApplications - 1);
     suppressLocalEventsUntilMs = Date.now() + 750;
   }
+}
+
+export async function adjustPlaybackRate(
+  playbackRate: number,
+  durationMs: number,
+): Promise<void> {
+  const media = await waitForMedia();
+  resetPlaybackRate();
+  const safeRate = Math.max(0.9, Math.min(1.1, playbackRate));
+  media.preservesPitch = true;
+  media.playbackRate = safeRate;
+  if (safeRate === 1 || durationMs <= 0) return;
+
+  playbackRateResetTimer = window.setTimeout(() => {
+    playbackRateResetTimer = null;
+    const activeMedia = findMediaElement();
+    if (activeMedia) activeMedia.playbackRate = 1;
+  }, Math.max(100, durationMs));
 }
 
 export function observePlayback(listener: Listener): () => void {
@@ -190,6 +232,7 @@ export function getAdapterDiagnostics(
     playback: readPlaybackState(lastPagePlayerTrack),
     mediaReadyState: media?.readyState ?? null,
     mediaNetworkState: media?.networkState ?? null,
+    playbackRate: media?.playbackRate ?? null,
     suppressingLocalEvents: shouldSuppressLocalEvents(),
     activePlaybackApplications,
     lastInterruption,
@@ -209,6 +252,77 @@ export async function getPlaybackState(): Promise<LocalPlaybackState> {
 
 function shouldSuppressLocalEvents(): boolean {
   return activePlaybackApplications > 0 || Date.now() < suppressLocalEventsUntilMs;
+}
+
+function resetPlaybackRate(): void {
+  if (playbackRateResetTimer !== null) {
+    window.clearTimeout(playbackRateResetTimer);
+    playbackRateResetTimer = null;
+  }
+  const media = findMediaElement();
+  if (media && media.playbackRate !== 1) media.playbackRate = 1;
+}
+
+async function waitForPlayableMedia(media: HTMLMediaElement): Promise<void> {
+  if (media.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA) return;
+  await new Promise<void>((resolve, reject) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      window.clearInterval(poll);
+      window.clearTimeout(timeout);
+      media.removeEventListener("canplay", onCanPlay);
+      resolve();
+    };
+    const checkReadyState = () => {
+      if (media.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA) finish();
+    };
+    const onCanPlay = () => finish();
+    const poll = window.setInterval(checkReadyState, 50);
+    const timeout = window.setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      window.clearInterval(poll);
+      media.removeEventListener("canplay", onCanPlay);
+      reject(new Error("Timed out waiting for media canplay."));
+    }, MEDIA_READY_TIMEOUT_MS);
+    media.addEventListener("canplay", onCanPlay, { once: true });
+    checkReadyState();
+  });
+}
+
+async function seekMedia(
+  media: HTMLMediaElement,
+  positionSeconds: number,
+): Promise<void> {
+  const target = Math.max(0, positionSeconds);
+  if (Math.abs(media.currentTime - target) <= 0.02 && !media.seeking) return;
+
+  await new Promise<void>((resolve, reject) => {
+    const finish = () => {
+      window.clearTimeout(timeout);
+      media.removeEventListener("seeked", finish);
+      resolve();
+    };
+    const timeout = window.setTimeout(() => {
+      media.removeEventListener("seeked", finish);
+      reject(new Error("Timed out waiting for media seeked."));
+    }, MEDIA_SEEK_TIMEOUT_MS);
+    media.addEventListener("seeked", finish, { once: true });
+    media.currentTime = target;
+    queueMicrotask(() => {
+      if (!media.seeking && Math.abs(media.currentTime - target) <= 0.02) {
+        finish();
+      }
+    });
+  });
+}
+
+async function delay(durationMs: number): Promise<void> {
+  await new Promise<void>((resolve) => {
+    window.setTimeout(resolve, durationMs);
+  });
 }
 
 async function pauseLocalPlayback(): Promise<void> {

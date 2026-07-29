@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import type { PartyRoomState } from "@ytm-party/shared";
 import {
   applyRoomMutation,
+  markPlaybackReady,
   markParticipantDisconnected,
+  releasePreparedPlayback,
   removeParticipant,
   removeInactiveParticipants,
   transferHost,
@@ -88,15 +90,25 @@ describe("party room mutations", () => {
       "host",
       2_000,
       () => "unused",
+      undefined,
+      new Set(["host", "guest"]),
+      () => "playback-first",
     );
 
     expect(result.error).toBeUndefined();
     expect(state.queue).toEqual([]);
     expect(state.playback).toEqual({
       track: { videoId: "first-track" },
-      paused: false,
+      paused: true,
       positionSeconds: 0,
       effectiveAtMs: 2_000,
+      playbackId: "playback-first",
+    });
+    expect(state.playbackPreparation).toEqual({
+      playbackId: "playback-first",
+      deadlineAtMs: 10_000,
+      eligibleParticipantIds: ["host", "guest"],
+      readyParticipantIds: [],
     });
   });
 
@@ -334,15 +346,85 @@ describe("party room mutations", () => {
       "host",
       3_000,
       () => "unused",
+      undefined,
+      new Set(["host", "guest"]),
+      () => "playback-next",
     );
 
     expect(result.changed).toBe(true);
     expect(state.playback).toEqual({
       track: { videoId: "next" },
-      paused: false,
+      paused: true,
       positionSeconds: 0,
       effectiveAtMs: 3_000,
+      playbackId: "playback-next",
     });
+    expect(state.playbackPreparation).toEqual({
+      playbackId: "playback-next",
+      deadlineAtMs: 11_000,
+      eligibleParticipantIds: ["host", "guest"],
+      readyParticipantIds: [],
+    });
+  });
+
+  it("starts prepared playback only after every eligible listener is ready", () => {
+    const state = createRoomState();
+    state.queue.push({
+      id: "queue-1",
+      track: { videoId: "next" },
+      addedByParticipantId: "host",
+      addedAtMs: 1_500,
+    });
+    applyRoomMutation(
+      state,
+      { type: "playback.skip", operationId: "host-skip", expectedRevision: 4 },
+      "host",
+      3_000,
+      () => "unused",
+      undefined,
+      new Set(["host", "guest"]),
+      () => "playback-next",
+    );
+
+    expect(
+      markPlaybackReady(state, "host", "playback-next", 3_500),
+    ).toEqual({ changed: true, started: false });
+    expect(state.playback.paused).toBe(true);
+    expect(
+      markPlaybackReady(state, "guest", "playback-next", 3_700),
+    ).toEqual({ changed: true, started: true });
+    expect(state.playback).toMatchObject({
+      paused: false,
+      positionSeconds: 0,
+      effectiveAtMs: 4_700,
+      playbackId: "playback-next",
+    });
+    expect(state.playbackPreparation).toBeUndefined();
+  });
+
+  it("releases a prepared track at its deadline without a slow listener", () => {
+    const state = createRoomState();
+    state.queue.push({
+      id: "queue-1",
+      track: { videoId: "next" },
+      addedByParticipantId: "host",
+      addedAtMs: 1_500,
+    });
+    applyRoomMutation(
+      state,
+      { type: "playback.skip", operationId: "host-skip", expectedRevision: 4 },
+      "host",
+      3_000,
+      () => "unused",
+      undefined,
+      new Set(["host", "guest"]),
+      () => "playback-next",
+    );
+
+    markPlaybackReady(state, "host", "playback-next", 3_500);
+    expect(releasePreparedPlayback(state, 10_999)).toBe(false);
+    expect(releasePreparedPlayback(state, 11_000)).toBe(true);
+    expect(state.playback.effectiveAtMs).toBe(12_000);
   });
 
   it("requeues the current host track to the front and clears playback", () => {

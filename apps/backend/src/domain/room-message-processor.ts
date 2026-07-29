@@ -15,7 +15,7 @@ import {
   rememberOperationResult,
 } from "./room-auth";
 import type { RoomLimits } from "./room-limits";
-import { applyRoomMutation } from "./room-state";
+import { applyRoomMutation, markPlaybackReady } from "./room-state";
 
 type RoomMessageContext = {
   socket: WebSocket;
@@ -95,6 +95,21 @@ export async function processRoomMessage({
   }
 
   const eventTimeMs = now();
+  if (message.type === "playback.ready") {
+    const readiness = markPlaybackReady(
+      room,
+      session.participantId,
+      message.playbackId,
+      eventTimeMs,
+    );
+    if (readiness.changed) {
+      room.lastActivityAtMs = eventTimeMs;
+      if (readiness.started) room.revision += 1;
+      await persist();
+      broadcast();
+    }
+    return;
+  }
   if (message.type === "participant.status") {
     // Presence updates broadcast a fresh snapshot but intentionally do NOT
     // increment the room revision. The revision drives optimistic-concurrency
@@ -129,6 +144,7 @@ export async function processRoomMessage({
     () => generateId("queue"),
     limits,
     connectedParticipantIds(),
+    () => generateId("playback"),
   );
   if (result.error) {
     const operationResult: Extract<

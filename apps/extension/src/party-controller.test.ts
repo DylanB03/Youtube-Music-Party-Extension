@@ -7,6 +7,7 @@ import type {
   SyncStatus,
   Track,
 } from "@ytm-party/shared";
+import { currentPlaybackPositionSeconds } from "@ytm-party/shared";
 import { PartyController } from "./party-controller";
 import { PartyApiError } from "./party-api";
 import type {
@@ -108,6 +109,7 @@ class FakeStorage {
 
 class FakeTabs {
   applied: PartyPlaybackState[] = [];
+  rateAdjustments: Array<{ playbackRate: number; durationMs: number }> = [];
   failApply = false;
   failAfterApply = false;
   positionOffsetSeconds = 0;
@@ -133,12 +135,22 @@ class FakeTabs {
       this.playback = {
         track: playback.track,
         paused: playback.paused,
-        positionSeconds: playback.positionSeconds + this.positionOffsetSeconds,
+        positionSeconds:
+          currentPlaybackPositionSeconds(playback, Date.now()) +
+          this.positionOffsetSeconds,
         buffering: false,
       };
     }
     if (this.failAfterApply) throw new Error("Tab reported a late failure");
     return this.applicationResult;
+  }
+
+  async adjustPlaybackRate(
+    playbackRate: number,
+    durationMs: number,
+  ): Promise<void> {
+    this.rateAdjustments.push({ playbackRate, durationMs });
+    this.playback = { ...this.playback, playbackRate };
   }
 
   async getContextSong(): Promise<Track | null> {
@@ -833,6 +845,57 @@ describe("party controller orchestration", () => {
     ).toHaveLength(0);
   });
 
+  it("reports readiness only after the prepared canonical track applies", async () => {
+    const { connection, tabs } = await createGuestController();
+    connection.sent = [];
+    tabs.applied = [];
+    const prepared = roomState();
+    prepared.revision = 3;
+    prepared.playback = {
+      track: { videoId: "next-track" },
+      paused: true,
+      positionSeconds: 0,
+      effectiveAtMs: Date.now(),
+      playbackId: "playback-next",
+    };
+    prepared.playbackPreparation = {
+      playbackId: "playback-next",
+      deadlineAtMs: Date.now() + 8_000,
+      eligibleParticipantIds: ["host", "guest"],
+      readyParticipantIds: [],
+    };
+
+    connection.emitSnapshot(prepared);
+    await flushControllerWork();
+
+    expect(tabs.applied.at(-1)?.track?.videoId).toBe("next-track");
+    expect(connection.sent).toContainEqual({
+      type: "playback.ready",
+      playbackId: "playback-next",
+    });
+  });
+
+  it("does not publish a host buffering pause to the room", async () => {
+    const { controller, connection } = await createHostController();
+    connection.sent = [];
+
+    await controller.handleLocalPlaybackEvent({
+      type: "local.pause",
+      playback: {
+        track: { videoId: "current-track" },
+        paused: true,
+        positionSeconds: 12,
+        buffering: true,
+      },
+    });
+
+    expect(
+      connection.sent.filter(
+        (message) => message.type === "playback.host_state",
+      ),
+    ).toHaveLength(0);
+  });
+
   it("automatically rejoins an auto-advanced guest when the correct song starts late", async () => {
     const { controller, connection, tabs } = await createGuestController();
     const nextState = roomState();
@@ -861,7 +924,12 @@ describe("party controller orchestration", () => {
     });
 
     expect(tabs.applied.at(-1)?.track?.videoId).toBe("next-track");
-    expect(tabs.applied.at(-1)?.positionSeconds).toBeGreaterThan(4);
+    expect(
+      currentPlaybackPositionSeconds(
+        tabs.applied.at(-1) as PartyPlaybackState,
+        Date.now(),
+      ),
+    ).toBeGreaterThan(4);
     expect(controller.getView().localSyncStatus).toBe("in_sync");
     expect(
       connection.sent.filter(
@@ -1513,9 +1581,16 @@ describe("party controller orchestration", () => {
       resumed.queue = [requeued.queue[1]!];
       resumed.playback = {
         track: { videoId: "current-track" },
-        paused: false,
+        paused: true,
         positionSeconds: 0,
         effectiveAtMs: Date.now(),
+        playbackId: "resumed-playback",
+      };
+      resumed.playbackPreparation = {
+        playbackId: "resumed-playback",
+        deadlineAtMs: Date.now() + 8_000,
+        eligibleParticipantIds: ["host"],
+        readyParticipantIds: [],
       };
       connection.snapshotOnSkip = resumed;
       connection.sent = [];
@@ -1526,6 +1601,10 @@ describe("party controller orchestration", () => {
 
       expect(controller.getView().localSyncStatus).toBe("in_sync");
       expect(tabs.playback.track?.videoId).toBe("current-track");
+      expect(connection.sent).toContainEqual({
+        type: "playback.ready",
+        playbackId: "resumed-playback",
+      });
       expect(
         connection.sent.filter(
           (message) =>

@@ -258,6 +258,16 @@ test("loads the extension content script on YouTube Music", async () => {
           this.currentVideoId = videoId;
           this.currentTitle = "Verified Party Song";
           this.currentArtist = "Verified Party Artist";
+          const media = document.querySelector("video");
+          if (media) {
+            Object.defineProperty(media, "readyState", {
+              configurable: true,
+              value: HTMLMediaElement.HAVE_FUTURE_DATA,
+            });
+            window.setTimeout(() => {
+              media.dispatchEvent(new Event("canplay"));
+            }, 50);
+          }
         },
         pauseVideo() {
           return undefined;

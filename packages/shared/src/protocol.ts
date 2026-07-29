@@ -50,6 +50,14 @@ export type PartyPlaybackState = {
   paused: boolean;
   positionSeconds: number;
   effectiveAtMs: number;
+  playbackId?: string;
+};
+
+export type PlaybackPreparation = {
+  playbackId: string;
+  deadlineAtMs: number;
+  eligibleParticipantIds: string[];
+  readyParticipantIds: string[];
 };
 
 export type ParticipantState = {
@@ -67,6 +75,7 @@ export type PartyRoomState = {
   hostParticipantId: string;
   permissions: RoomPermissions;
   playback: PartyPlaybackState;
+  playbackPreparation?: PlaybackPreparation;
   queue: QueueItem[];
   participants: ParticipantState[];
   inviteCode?: string;
@@ -82,6 +91,7 @@ export type LocalPlaybackState = {
   positionSeconds: number;
   durationSeconds?: number;
   buffering: boolean;
+  playbackRate?: number;
   interruption?: "advertisement" | "unavailable";
 };
 
@@ -170,6 +180,10 @@ export type ClientMessage =
   | {
       type: "participant.status";
       syncStatus: SyncStatus;
+    }
+  | {
+      type: "playback.ready";
+      playbackId: string;
     }
   | {
       type: "participant.leave";
@@ -306,6 +320,11 @@ export type ExtensionRequest =
       playback: PartyPlaybackState;
     }
   | {
+      type: "content.adjustPlaybackRate";
+      playbackRate: number;
+      durationMs: number;
+    }
+  | {
       type: "content.getContextSong";
     }
   | {
@@ -374,7 +393,8 @@ export function isPartyPlaybackState(value: unknown): value is PartyPlaybackStat
     (playback.track === null || isTrack(playback.track)) &&
     typeof playback.paused === "boolean" &&
     isFiniteNumber(playback.positionSeconds) &&
-    isFiniteNumber(playback.effectiveAtMs)
+    isFiniteNumber(playback.effectiveAtMs) &&
+    isBoundedOptionalString(playback.playbackId, 256)
   );
 }
 
@@ -391,6 +411,9 @@ export function isClientMessage(value: unknown): value is ClientMessage {
 
     case "participant.status":
       return isSyncStatus(message.syncStatus);
+
+    case "playback.ready":
+      return isBoundedString(message.playbackId, 256, true);
 
     case "participant.leave":
       return isOperationId(message.operationId) && isRevision(message.expectedRevision);
@@ -526,6 +549,8 @@ function isPartyRoomState(value: unknown): value is PartyRoomState {
     isBoundedString(room.hostParticipantId, 256, true) &&
     isRoomPermissions(room.permissions) &&
     isPartyPlaybackState(room.playback) &&
+    (room.playbackPreparation === undefined ||
+      isPlaybackPreparation(room.playbackPreparation)) &&
     Array.isArray(room.queue) &&
     room.queue.every(isQueueItem) &&
     Array.isArray(room.participants) &&
@@ -535,6 +560,23 @@ function isPartyRoomState(value: unknown): value is PartyRoomState {
     isOptionalFiniteNumber(room.createdAtMs) &&
     isOptionalFiniteNumber(room.lastActivityAtMs) &&
     isOptionalFiniteNumber(room.expiresAtMs)
+  );
+}
+
+function isPlaybackPreparation(value: unknown): value is PlaybackPreparation {
+  if (!value || typeof value !== "object") return false;
+  const preparation = value as PlaybackPreparation;
+  return (
+    isBoundedString(preparation.playbackId, 256, true) &&
+    isFiniteNumber(preparation.deadlineAtMs) &&
+    Array.isArray(preparation.eligibleParticipantIds) &&
+    preparation.eligibleParticipantIds.every((id) =>
+      isBoundedString(id, 256, true),
+    ) &&
+    Array.isArray(preparation.readyParticipantIds) &&
+    preparation.readyParticipantIds.every((id) =>
+      isBoundedString(id, 256, true),
+    )
   );
 }
 

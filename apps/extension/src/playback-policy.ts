@@ -82,6 +82,7 @@ export function playbackKey(playback: PartyPlaybackState): string {
     playback.paused ? "paused" : "playing",
     playback.positionSeconds,
     playback.effectiveAtMs,
+    playback.playbackId ?? "",
   ];
   return parts.join(":");
 }

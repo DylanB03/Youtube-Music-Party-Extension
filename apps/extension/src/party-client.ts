@@ -16,7 +16,9 @@ type Listener = (state: PartyRoomState) => void;
 type ErrorListener = (message: string) => void;
 type ConnectionStateListener = (state: ConnectionState) => void;
 const OPERATION_TIMEOUT_MS = 15_000;
-const CLOCK_RESYNC_INTERVAL_MS = 5 * 60_000;
+const CLOCK_RESYNC_INTERVAL_MS = 60_000;
+const CLOCK_SYNC_BURST_SIZE = 5;
+const CLOCK_SAMPLE_WINDOW_SIZE = 8;
 const SOCKET_OPEN_TIMEOUT_MS = 10_000;
 const RECONNECT_FAILURE_AFTER_MS = 2 * 60_000;
 
@@ -35,6 +37,7 @@ export class PartyClient {
   private socketOpenTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectStartedAtMs: number | null = null;
   private opening = false;
+  private clockSamples: Array<{ offsetMs: number; roundTripMs: number }> = [];
   clockOffsetMs = 0;
 
   constructor(
@@ -205,17 +208,35 @@ export class PartyClient {
     }
 
     if (message.type === "clock.pong") {
-      this.clockOffsetMs = estimateClockOffsetMs(
+      const clientReceivedAtMs = Date.now();
+      const offsetMs = estimateClockOffsetMs(
         message.clientSentAtMs,
-        Date.now(),
+        clientReceivedAtMs,
         message.serverSentAtMs,
       );
+      this.clockSamples = [
+        ...this.clockSamples,
+        {
+          offsetMs,
+          roundTripMs: Math.max(
+            0,
+            clientReceivedAtMs - message.clientSentAtMs,
+          ),
+        },
+      ].slice(-CLOCK_SAMPLE_WINDOW_SIZE);
+      this.clockOffsetMs =
+        this.clockSamples
+          .slice()
+          .sort((left, right) => left.roundTripMs - right.roundTripMs)[0]
+          ?.offsetMs ?? offsetMs;
     }
   }
 
   private syncClockAndScheduleRefresh(): void {
     if (this.pingTimer) clearTimeout(this.pingTimer);
-    this.send({ type: "clock.ping", clientSentAtMs: Date.now() });
+    for (let sample = 0; sample < CLOCK_SYNC_BURST_SIZE; sample += 1) {
+      this.send({ type: "clock.ping", clientSentAtMs: Date.now() });
+    }
     this.pingTimer = setTimeout(() => {
       this.pingTimer = null;
       if (this.socket?.readyState === WebSocket.OPEN) {

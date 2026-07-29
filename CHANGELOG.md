@@ -2,6 +2,27 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.10] - 2026-07-29
+
+### Added
+
+- Added a room-authoritative playback preparation barrier: connected,
+  synchronized listeners preload and seek the next track, acknowledge readiness,
+  and then start from a shared future timestamp, with an eight-second timeout so
+  one slow or disconnected listener cannot block the room indefinitely.
+- Added low-amplitude playback-rate correction for sub-half-second drift so
+  listeners converge without repeated audible hard seeks.
+
+### Changed
+
+- Changed playback application to wait for playable media and completed seeks
+  before starting, while preserving the original server timeline through player
+  load time.
+- Increased clock sampling and local drift-monitor frequency, and made the host
+  reconcile to the same room-owned timeline used by guests.
+- Isolated host buffering and interruption events from authoritative room
+  playback so one listener's player cannot pause everyone else.
+
 ## [0.1.3] - 2026-07-10
 
 ### Changed

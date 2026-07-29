@@ -53,7 +53,7 @@ describe("PartyClient clock synchronization", () => {
     vi.restoreAllMocks();
   });
 
-  it("syncs on connection and refreshes no more than once every five minutes", async () => {
+  it("takes a clock-sample burst on connection and refreshes once per minute", async () => {
     vi.useFakeTimers();
     vi.stubGlobal("WebSocket", FakeWebSocket);
 
@@ -73,17 +73,24 @@ describe("PartyClient clock synchronization", () => {
 
     expect(
       socket.sentMessages.map((message) => JSON.parse(message).type as string),
-    ).toEqual(["room.snapshot.request", "clock.ping"]);
+    ).toEqual([
+      "room.snapshot.request",
+      "clock.ping",
+      "clock.ping",
+      "clock.ping",
+      "clock.ping",
+      "clock.ping",
+    ]);
 
-    await vi.advanceTimersByTimeAsync(299_999);
+    await vi.advanceTimersByTimeAsync(59_999);
     expect(
       socket.sentMessages.filter((message) => JSON.parse(message).type === "clock.ping"),
-    ).toHaveLength(1);
+    ).toHaveLength(5);
 
     await vi.advanceTimersByTimeAsync(1);
     expect(
       socket.sentMessages.filter((message) => JSON.parse(message).type === "clock.ping"),
-    ).toHaveLength(2);
+    ).toHaveLength(10);
 
     client.disconnect();
   });

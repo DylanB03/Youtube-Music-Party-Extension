@@ -39,6 +39,18 @@ export class YouTubeMusicTabGateway {
     return result;
   }
 
+  async adjustPlaybackRate(
+    playbackRate: number,
+    durationMs: number,
+    tabId?: number,
+  ): Promise<void> {
+    await this.sendToTab<null>(await this.resolveTargetTabId(tabId), {
+      type: "content.adjustPlaybackRate",
+      playbackRate,
+      durationMs,
+    });
+  }
+
   async getContextSong(tabId?: number): Promise<Track | null> {
     return this.sendToTab<Track>(tabId, {
       type: "content.getContextSong",

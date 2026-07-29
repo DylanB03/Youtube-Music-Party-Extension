@@ -1,6 +1,7 @@
 import {
   type ClientMessage,
   type ParticipantState,
+  type PlaybackPreparation,
   type PartyRoomState,
   type QueueItem,
   type Track,
@@ -21,6 +22,10 @@ export type RoomMutationResult = {
 
 type QueueIdFactory = () => string;
 
+export const PLAYBACK_PREPARE_TIMEOUT_MS = 8_000;
+export const PLAYBACK_START_LEAD_MS = 1_000;
+const MAX_HOST_OBSERVATION_AGE_MS = 2_000;
+
 export function applyRoomMutation(
   state: PartyRoomState,
   message: ClientMessage,
@@ -29,10 +34,16 @@ export function applyRoomMutation(
   createQueueId: QueueIdFactory,
   limits?: Pick<RoomLimits, "maxQueueItems">,
   connectedParticipantIds: Set<string> = new Set(),
+  createPlaybackId: () => string = () =>
+    `playback-${state.revision + 1}-${nowMs}`,
 ): RoomMutationResult {
   touchParticipant(state, participantId, nowMs);
 
-  if (message.type === "clock.ping" || message.type === "room.snapshot.request") {
+  if (
+    message.type === "clock.ping" ||
+    message.type === "room.snapshot.request" ||
+    message.type === "playback.ready"
+  ) {
     return { changed: false };
   }
 
@@ -65,11 +76,23 @@ export function applyRoomMutation(
     case "playback.host_state": {
       const hostError = validateHost(state, participantId);
       if (hostError) return { changed: false, error: hostError };
+      const observationAgeMs = Math.max(
+        0,
+        Math.min(
+          MAX_HOST_OBSERVATION_AGE_MS,
+          nowMs - message.playback.effectiveAtMs,
+        ),
+      );
       state.playback = {
         ...message.playback,
-        positionSeconds: Math.max(0, message.playback.positionSeconds),
+        positionSeconds: Math.max(
+          0,
+          message.playback.positionSeconds +
+            (message.playback.paused ? 0 : observationAgeMs / 1_000),
+        ),
         effectiveAtMs: nowMs,
       };
+      delete state.playbackPreparation;
       return { changed: true };
     }
 
@@ -108,6 +131,7 @@ export function applyRoomMutation(
         positionSeconds: 0,
         effectiveAtMs: nowMs,
       };
+      delete state.playbackPreparation;
       return { changed: true };
     }
 
@@ -121,7 +145,12 @@ export function applyRoomMutation(
           },
         };
       }
-      advanceQueue(state, nowMs);
+      advanceQueue(
+        state,
+        nowMs,
+        connectedParticipantIds,
+        createPlaybackId,
+      );
       return { changed: true };
     }
 
@@ -136,12 +165,13 @@ export function applyRoomMutation(
         };
       }
       if (!state.playback.track) {
-        state.playback = {
-          track: message.track,
-          paused: false,
-          positionSeconds: 0,
-          effectiveAtMs: nowMs,
-        };
+        prepareTrack(
+          state,
+          message.track,
+          nowMs,
+          connectedParticipantIds,
+          createPlaybackId,
+        );
         return { changed: true };
       }
       if (limits && state.queue.length >= limits.maxQueueItems) {
@@ -186,6 +216,53 @@ export function applyRoomMutation(
       return { changed: true };
     }
   }
+}
+
+export function markPlaybackReady(
+  state: PartyRoomState,
+  participantId: string,
+  playbackId: string,
+  nowMs: number,
+): { changed: boolean; started: boolean } {
+  const preparation = state.playbackPreparation;
+  if (
+    !preparation ||
+    preparation.playbackId !== playbackId ||
+    !preparation.eligibleParticipantIds.includes(participantId) ||
+    preparation.readyParticipantIds.includes(participantId)
+  ) {
+    return { changed: false, started: false };
+  }
+
+  preparation.readyParticipantIds.push(participantId);
+  return {
+    changed: true,
+    started: releasePreparedPlayback(state, nowMs),
+  };
+}
+
+export function releasePreparedPlayback(
+  state: PartyRoomState,
+  nowMs: number,
+): boolean {
+  const preparation = state.playbackPreparation;
+  if (!preparation || state.playback.playbackId !== preparation.playbackId) {
+    return false;
+  }
+  const readyIds = new Set(preparation.readyParticipantIds);
+  const everyoneReady = preparation.eligibleParticipantIds.every((id) =>
+    readyIds.has(id),
+  );
+  if (!everyoneReady && nowMs < preparation.deadlineAtMs) return false;
+
+  state.playback = {
+    ...state.playback,
+    paused: false,
+    positionSeconds: 0,
+    effectiveAtMs: nowMs + PLAYBACK_START_LEAD_MS,
+  };
+  delete state.playbackPreparation;
+  return true;
 }
 
 export function upsertConnectedParticipant(
@@ -391,14 +468,87 @@ function addQueueItem(
   state.queue.push(queueItem);
 }
 
-function advanceQueue(state: PartyRoomState, nowMs: number): void {
+function advanceQueue(
+  state: PartyRoomState,
+  nowMs: number,
+  connectedParticipantIds: Set<string>,
+  createPlaybackId: () => string,
+): void {
   const next = state.queue.shift();
+  if (next) {
+    prepareTrack(
+      state,
+      next.track,
+      nowMs,
+      connectedParticipantIds,
+      createPlaybackId,
+    );
+    return;
+  }
   state.playback = {
-    track: next?.track ?? null,
-    paused: !next,
+    track: null,
+    paused: true,
     positionSeconds: 0,
     effectiveAtMs: nowMs,
   };
+  delete state.playbackPreparation;
+}
+
+function prepareTrack(
+  state: PartyRoomState,
+  track: Track,
+  nowMs: number,
+  connectedParticipantIds: Set<string>,
+  createPlaybackId: () => string,
+): void {
+  const playbackId = createPlaybackId();
+  const eligibleParticipantIds = preparationParticipants(
+    state,
+    connectedParticipantIds,
+  );
+  state.playback = {
+    track,
+    paused: true,
+    positionSeconds: 0,
+    effectiveAtMs: nowMs,
+    playbackId,
+  };
+
+  if (eligibleParticipantIds.length === 0) {
+    state.playback = {
+      ...state.playback,
+      paused: false,
+      effectiveAtMs: nowMs + PLAYBACK_START_LEAD_MS,
+    };
+    delete state.playbackPreparation;
+    return;
+  }
+
+  state.playbackPreparation = {
+    playbackId,
+    deadlineAtMs: nowMs + PLAYBACK_PREPARE_TIMEOUT_MS,
+    eligibleParticipantIds,
+    readyParticipantIds: [],
+  } satisfies PlaybackPreparation;
+}
+
+function preparationParticipants(
+  state: PartyRoomState,
+  connectedParticipantIds: Set<string>,
+): string[] {
+  const hasConnectionSnapshot = connectedParticipantIds.size > 0;
+  return state.participants
+    .filter(
+      (participant) =>
+        participant.syncStatus === "in_sync" ||
+        participant.syncStatus === "ready_to_resume",
+    )
+    .filter(
+      (participant) =>
+        !hasConnectionSnapshot ||
+        connectedParticipantIds.has(participant.participantId),
+    )
+    .map((participant) => participant.participantId);
 }
 
 function reorderQueue(state: PartyRoomState, queueItemIds: string[]): void {

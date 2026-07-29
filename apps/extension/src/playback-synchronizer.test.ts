@@ -1,17 +1,20 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type {
   LocalPlaybackState,
   PartyPlaybackState,
   PartyRoomState,
 } from "@ytm-party/shared";
+import { currentPlaybackPositionSeconds } from "@ytm-party/shared";
 import { PlaybackSynchronizer } from "./playback-synchronizer";
 import type { ActiveSession } from "./session-types";
 
 class VerificationTabs {
   applyCount = 0;
+  rateAdjustments: Array<{ playbackRate: number; durationMs: number }> = [];
   throwAfterApply = false;
   acceptPlayback = true;
   positionOffsetSeconds = 0;
+  applyDelayMs = 0;
   local: LocalPlaybackState = {
     track: { videoId: "wrong-track" },
     paused: false,
@@ -25,16 +28,31 @@ class VerificationTabs {
 
   async applyPlayback(playback: PartyPlaybackState): Promise<"applied"> {
     this.applyCount += 1;
+    if (this.applyDelayMs > 0) {
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, this.applyDelayMs);
+      });
+    }
     if (this.acceptPlayback) {
       this.local = {
         track: playback.track,
         paused: playback.paused,
-        positionSeconds: playback.positionSeconds + this.positionOffsetSeconds,
+        positionSeconds:
+          currentPlaybackPositionSeconds(playback, Date.now()) +
+          this.positionOffsetSeconds,
         buffering: false,
       };
     }
     if (this.throwAfterApply) throw new Error("Late page error");
     return "applied";
+  }
+
+  async adjustPlaybackRate(
+    playbackRate: number,
+    durationMs: number,
+  ): Promise<void> {
+    this.rateAdjustments.push({ playbackRate, durationMs });
+    this.local = { ...this.local, playbackRate };
   }
 }
 
@@ -117,5 +135,43 @@ describe("PlaybackSynchronizer application verification", () => {
     );
     expect(tabs.applyCount).toBe(2);
     expect(tabs.local.track?.videoId).toBe("canonical-track");
+  });
+
+  it("keeps the room time anchor while a slow player loads", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(10_000);
+    try {
+      const tabs = new VerificationTabs();
+      tabs.applyDelayMs = 1_000;
+      const synchronizer = new PlaybackSynchronizer(tabs);
+      const application = synchronizer.apply(activeSession(canonicalPlayback()));
+
+      await vi.advanceTimersByTimeAsync(1_000);
+
+      await expect(application).resolves.toBe("applied");
+      expect(tabs.applyCount).toBe(1);
+      expect(tabs.local.positionSeconds).toBeCloseTo(1, 3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("uses a temporary rate correction for moderate drift", async () => {
+    const canonical = canonicalPlayback();
+    const tabs = new VerificationTabs();
+    tabs.local = {
+      track: canonical.track,
+      paused: false,
+      positionSeconds: 0.2,
+      playbackRate: 1,
+      buffering: false,
+    };
+    const synchronizer = new PlaybackSynchronizer(tabs);
+
+    await expect(
+      synchronizer.reconcile(activeSession(canonical)),
+    ).resolves.toBe("correcting");
+    expect(tabs.applyCount).toBe(0);
+    expect(tabs.rateAdjustments[0]?.playbackRate).toBeLessThan(1);
   });
 });

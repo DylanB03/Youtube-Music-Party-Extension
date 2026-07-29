@@ -89,6 +89,7 @@ export function readPlaybackState(playerTrack?: Track | null): LocalPlaybackStat
     positionSeconds: media?.currentTime ?? 0,
     durationSeconds: Number.isFinite(media?.duration) ? media?.duration : undefined,
     buffering: Boolean(media && media.readyState < HTMLMediaElement.HAVE_FUTURE_DATA),
+    playbackRate: media?.playbackRate ?? 1,
     interruption: detectInterruption(media),
   };
 }

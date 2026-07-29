@@ -12,6 +12,7 @@ import {
   markParticipantDisconnected,
   removeParticipant,
   removeInactiveParticipants,
+  releasePreparedPlayback,
   transferHost,
   upsertConnectedParticipant,
 } from "./domain/room-state";
@@ -98,6 +99,7 @@ export class PartyRoom {
     }
 
     const connectedIds = this.connections.participantIds();
+    const playbackStarted = releasePreparedPlayback(this.roomState, nowMs);
     const hostChanged = this.roomState.hostDisconnectedAtMs
       ? transferHost(this.roomState, connectedIds)
       : false;
@@ -108,7 +110,7 @@ export class PartyRoom {
       PARTICIPANT_RETENTION_MS,
     );
     if (participantsRemoved) this.removeOrphanedParticipantTokens();
-    if (hostChanged || participantsRemoved) {
+    if (playbackStarted || hostChanged || participantsRemoved) {
       await this.commitAndBroadcast();
     }
     await this.scheduleNextPresenceAlarm();

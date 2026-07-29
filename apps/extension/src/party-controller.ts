@@ -54,6 +54,11 @@ type TabGatewayPort = {
     playback: PartyPlaybackState,
     tabId?: number,
   ): Promise<PlaybackApplicationResult>;
+  adjustPlaybackRate(
+    playbackRate: number,
+    durationMs: number,
+    tabId?: number,
+  ): Promise<void>;
   getContextSong(tabId?: number): Promise<Track | null>;
   resolveActivePartyTabId(): Promise<number | null>;
 };
@@ -66,8 +71,8 @@ type PendingAutoAdvance = {
 
 const AUTO_ADVANCE_EVENT_SUPPRESSION_MS = 15_000;
 const EXTERNAL_NAV_DEFER_MS = 1_500;
-const LOCAL_DRIFT_MONITOR_INTERVAL_MS = 1_000;
-const LOCAL_DRIFT_CORRECTION_COOLDOWN_MS = 3_000;
+const LOCAL_DRIFT_MONITOR_INTERVAL_MS = 500;
+const LOCAL_DRIFT_CORRECTION_COOLDOWN_MS = 750;
 const PLAYBACK_FAILURES_BEFORE_MANUAL_RECOVERY = 3;
 
 export class PartyController {
@@ -89,6 +94,7 @@ export class PartyController {
   private hostCanonicalMaxPositionSeconds = 0;
   private lastHostCanonicalPlayback: LocalPlaybackState | null = null;
   private lastHostLocalPlayback: LocalPlaybackState | null = null;
+  private lastPlaybackReadyId: string | null = null;
   private readonly mutations = new PartyMutationCoordinator();
   private readonly playback: PlaybackSynchronizer;
 
@@ -173,6 +179,7 @@ export class PartyController {
     const session = this.requireSession();
     const result = await this.playback.apply(session, this.partyTabId ?? undefined);
     if (this.session !== session) return this.getView();
+    this.reportPreparedPlaybackReady(session.state, result);
     if (result === "applied") {
       if (session.state?.hostParticipantId === session.participantId) {
         this.clearAutoAdvanceAfterCanonicalApply(session.state, result);
@@ -211,6 +218,7 @@ export class PartyController {
       await this.setLocalSyncStatus("navigating");
       this.resetHostCanonicalTracking(playback.track.videoId);
       const result = await this.playback.apply(session, this.partyTabId ?? undefined);
+      this.reportPreparedPlaybackReady(session.state, result);
       if (result === "applied") {
         await this.setLocalSyncStatus("in_sync");
       } else if (result === "track_unavailable") {
@@ -410,11 +418,13 @@ export class PartyController {
       // result started for an older snapshot must not clear transition guards
       // or change recovery state for the newer canonical song.
       if (session.state !== state) {
+        this.reportPreparedPlaybackReady(session.state, result);
         this.publishState();
         return;
       }
       await this.handlePlaybackResult(result);
       if (this.session !== session) return;
+      this.reportPreparedPlaybackReady(state, result);
       if (state.hostParticipantId === session.participantId) {
         this.clearAutoAdvanceAfterCanonicalApply(state, result);
       }
@@ -496,6 +506,12 @@ export class PartyController {
     // track has actually been applied. Otherwise progress or duplicate ended
     // events from YouTube Music's auto-next can skip multiple queued songs.
     if (this.shouldIgnoreHostEventDuringAutoAdvance()) return;
+    if (
+      event.playback.interruption ||
+      (event.playback.buffering && event.type !== "local.ended")
+    ) {
+      return;
+    }
 
     const previousLocal = this.lastHostLocalPlayback;
     this.lastHostLocalPlayback = event.playback;
@@ -558,6 +574,17 @@ export class PartyController {
         return;
       }
       await this.handleHostExternalNavigation();
+      return;
+    }
+
+    if (event.type === "local.progress") {
+      const result = await this.playback.reconcile(
+        session,
+        this.partyTabId ?? undefined,
+      );
+      if (this.session === session) {
+        await this.handlePlaybackResult(result);
+      }
       return;
     }
 
@@ -630,6 +657,7 @@ export class PartyController {
     this.hostCanonicalMaxPositionSeconds = 0;
     this.lastHostCanonicalPlayback = null;
     this.lastHostLocalPlayback = null;
+    this.lastPlaybackReadyId = null;
   }
 
   private cancelDeferredExternalNavigation(): void {
@@ -791,7 +819,10 @@ export class PartyController {
     await this.enqueueMutation((operationId, expectedRevision) => ({
       type: "playback.host_state",
       operationId,
-      playback: localToPartyPlayback(event.playback, Date.now()),
+      playback: localToPartyPlayback(
+        event.playback,
+        Date.now() + (this.session?.client.clockOffsetMs ?? 0),
+      ),
       expectedRevision,
     }));
   }
@@ -893,7 +924,11 @@ export class PartyController {
     result: PlaybackSyncResult,
   ): Promise<void> {
     const session = this.requireSession();
-    if (result === "applied" || result === "unchanged") {
+    if (
+      result === "applied" ||
+      result === "unchanged" ||
+      result === "correcting"
+    ) {
       this.resetPlaybackFailures();
       if (
         session.localSyncStatus === "out_of_sync" ||
@@ -910,8 +945,8 @@ export class PartyController {
     } else if (result === "out_of_sync") {
       // A correct-track verification miss is recoverable. Keep the participant
       // active so the drift monitor can retry instead of forcing a manual
-      // "Join playback" action. This is especially important for the host,
-      // whose player is the source of authority.
+      // "Join playback" action. The room timeline remains authoritative while
+      // that individual player catches up.
       this.recordPlaybackFailure();
       if (session.localSyncStatus !== "in_sync") {
         await this.setLocalSyncStatus("in_sync");
@@ -942,6 +977,32 @@ export class PartyController {
   private resetPlaybackFailures(): void {
     this.playbackFailureKey = null;
     this.playbackFailureCount = 0;
+  }
+
+  private reportPreparedPlaybackReady(
+    state: PartyRoomState | null,
+    result: PlaybackSyncResult,
+  ): void {
+    const session = this.session;
+    const preparation = state?.playbackPreparation;
+    if (
+      !session ||
+      !preparation ||
+      (result !== "applied" && result !== "unchanged") ||
+      !preparation.eligibleParticipantIds.includes(session.participantId)
+    ) {
+      return;
+    }
+    if (preparation.readyParticipantIds.includes(session.participantId)) {
+      this.lastPlaybackReadyId = preparation.playbackId;
+      return;
+    }
+    if (this.lastPlaybackReadyId === preparation.playbackId) return;
+    this.lastPlaybackReadyId = preparation.playbackId;
+    session.client.send({
+      type: "playback.ready",
+      playbackId: preparation.playbackId,
+    });
   }
 
   private async setLocalSyncStatus(status: SyncStatus): Promise<void> {

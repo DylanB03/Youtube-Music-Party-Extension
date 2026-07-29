@@ -25,8 +25,22 @@ export function nextPresenceAlarmAtMs(
     connectionCount > 0,
     lifecycle,
   );
+  const playbackPreparationDeadline = room.playbackPreparation?.deadlineAtMs;
   const candidates = preferredTime
-    ? [preferredTime, lifecycleExpiration, ...cleanupTimes]
-    : [lifecycleExpiration, ...cleanupTimes];
+    ? [
+        preferredTime,
+        lifecycleExpiration,
+        ...(playbackPreparationDeadline === undefined
+          ? []
+          : [playbackPreparationDeadline]),
+        ...cleanupTimes,
+      ]
+    : [
+        lifecycleExpiration,
+        ...(playbackPreparationDeadline === undefined
+          ? []
+          : [playbackPreparationDeadline]),
+        ...cleanupTimes,
+      ];
   return Math.min(...candidates);
 }

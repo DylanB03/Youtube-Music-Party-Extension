@@ -165,6 +165,42 @@ describe("room message processor", () => {
     expect(room.queue).toHaveLength(1);
   });
 
+  it("starts a prepared track only after all eligible listeners report ready", async () => {
+    const room = createRoom();
+    const auth = createAuth();
+    room.playback = {
+      track: { videoId: "next" },
+      paused: true,
+      positionSeconds: 0,
+      effectiveAtMs: 4_000,
+      playbackId: "playback-next",
+    };
+    room.playbackPreparation = {
+      playbackId: "playback-next",
+      deadlineAtMs: 12_000,
+      eligibleParticipantIds: ["host", "guest"],
+      readyParticipantIds: [],
+    };
+
+    const hostResult = await dispatch(room, auth, "host", {
+      type: "playback.ready",
+      playbackId: "playback-next",
+    });
+    expect(room.revision).toBe(7);
+    expect(room.playback.paused).toBe(true);
+    expect(hostResult.broadcasts).toBe(1);
+
+    const guestResult = await dispatch(room, auth, "guest", {
+      type: "playback.ready",
+      playbackId: "playback-next",
+    });
+    expect(room.revision).toBe(8);
+    expect(room.playback.paused).toBe(false);
+    expect(room.playback.effectiveAtMs).toBe(6_000);
+    expect(room.playbackPreparation).toBeUndefined();
+    expect(guestResult.broadcasts).toBe(1);
+  });
+
   it("removes a leaving host, transfers host, and closes the leaving participant", async () => {
     const room = createRoom();
     const auth = createAuth();

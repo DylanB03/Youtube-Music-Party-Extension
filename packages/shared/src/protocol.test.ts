@@ -50,6 +50,21 @@ describe("sync status validation", () => {
 });
 
 describe("client message validation", () => {
+  it("accepts bounded playback readiness generations", () => {
+    expect(
+      isClientMessage({
+        type: "playback.ready",
+        playbackId: "playback-1",
+      }),
+    ).toBe(true);
+    expect(
+      isClientMessage({
+        type: "playback.ready",
+        playbackId: "",
+      }),
+    ).toBe(false);
+  });
+
   it("accepts old permission payloads and normalizes the newer delete permission", () => {
     const permissions = {
       guestsCanSkip: true,
@@ -130,10 +145,17 @@ describe("server message validation", () => {
             guestsCanRemoveFromQueue: false,
           },
           playback: {
-            track: null,
+            track: { videoId: "track" },
             paused: true,
             positionSeconds: 0,
             effectiveAtMs: 1,
+            playbackId: "playback-1",
+          },
+          playbackPreparation: {
+            playbackId: "playback-1",
+            deadlineAtMs: 8_000,
+            eligibleParticipantIds: ["host"],
+            readyParticipantIds: [],
           },
           queue: [],
           participants: [

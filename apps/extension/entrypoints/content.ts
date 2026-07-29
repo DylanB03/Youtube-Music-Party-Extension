@@ -2,6 +2,7 @@ import { defineContentScript } from "wxt/utils/define-content-script";
 import type { ExtensionRequest } from "@ytm-party/shared";
 import { browser } from "../src/browser";
 import {
+  adjustPlaybackRate,
   applyPlayback,
   getAdapterDiagnostics,
   getPlaybackState,
@@ -73,6 +74,7 @@ type ContentCommand = Extract<
     type:
       | "content.getPlayback"
       | "content.applyPlayback"
+      | "content.adjustPlaybackRate"
       | "content.getContextSong"
       | "content.getDiagnostics";
   }
@@ -82,6 +84,7 @@ function isContentCommand(message: ExtensionRequest): message is ContentCommand 
   return (
     message.type === "content.getPlayback" ||
     message.type === "content.applyPlayback" ||
+    message.type === "content.adjustPlaybackRate" ||
     message.type === "content.getContextSong" ||
     message.type === "content.getDiagnostics"
   );
@@ -94,6 +97,9 @@ async function handleMessage(message: ContentCommand): Promise<unknown> {
 
     case "content.applyPlayback":
       return applyPlayback(message.playback);
+
+    case "content.adjustPlaybackRate":
+      return adjustPlaybackRate(message.playbackRate, message.durationMs);
 
     case "content.getContextSong":
       return trackSelection.take();
