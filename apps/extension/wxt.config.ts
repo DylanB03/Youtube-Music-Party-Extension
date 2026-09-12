@@ -39,7 +39,8 @@ export default defineConfig({
   },
   manifest: {
     name: "TogetherTune for YouTube Music™",
-    description: "Create synchronized listening parties for YouTube Music™.",
+    description:
+      "Start a YouTube Music™ listening party, share a short code, and keep every browser on the same track. No account required.",
     minimum_chrome_version: "116",
     icons: {
       16: "icon/16.png",

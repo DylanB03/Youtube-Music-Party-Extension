@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title desc">
+  <title id="title">TogetherTune shared pulse emblem</title>
+  <desc id="desc">Two opposing listener arcs circle a three-bar audio pulse.</desc>
+
+  <circle cx="64" cy="64" r="56" fill="#24120F"/>
+
+  <path
+    d="M27 52C32 35 47 24 64 23C77 22 89 27 99 37"
+    fill="none"
+    stroke="#FF5F3A"
+    stroke-linecap="round"
+    stroke-width="14"
+  />
+  <circle cx="99" cy="37" r="10" fill="#FF5F3A"/>
+
+  <path
+    d="M101 76C96 93 81 104 64 105C51 106 39 101 29 91"
+    fill="none"
+    stroke="#FFB000"
+    stroke-linecap="round"
+    stroke-width="14"
+  />
+  <circle cx="29" cy="91" r="10" fill="#FFB000"/>
+
+  <rect x="49" y="57" width="8" height="14" rx="4" fill="#FFF3E6"/>
+  <rect x="60" y="47" width="8" height="34" rx="4" fill="#FFF3E6"/>
+  <rect x="71" y="57" width="8" height="14" rx="4" fill="#FFF3E6"/>
+</svg>

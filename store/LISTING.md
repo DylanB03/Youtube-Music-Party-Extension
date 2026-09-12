@@ -6,32 +6,43 @@ TogetherTune for YouTube Music™
 
 ## Summary
 
-Create synchronized listening parties with a shared queue on YouTube Music™.
+Start a YouTube Music™ listening party, share a short code, and keep every browser on the same track. No account required.
 
 ## Category
 
-Fun
+Entertainment
 
 ## Single purpose
 
-TogetherTune lets people who intentionally join the same temporary room synchronize YouTube Music playback and manage one shared party queue.
+TogetherTune creates temporary YouTube Music listening rooms with synchronized playback, a shared queue, and host-controlled guest permissions.
 
 ## Detailed description
 
-Listen together without passing the aux cord around.
+Pass the aux without passing a thing.
 
-TogetherTune adds temporary listening parties to YouTube Music. Create a party, share its short invite code, and let friends join from their own browsers. The host controls synchronized playback while the group can share a queue. Hosts can decide whether guests may add songs or skip.
+TogetherTune turns YouTube Music into a shared listening room. Create a party, send the short room code, and listen from separate browsers without making an account.
 
-Features include:
+HEAR THE SAME MOMENT
 
-- synchronized track, play/pause, and playback position;
-- a shared ordered queue;
-- short invite codes and links;
-- host-controlled guest permissions;
-- reconnect and manual rejoin controls; and
-- controls integrated into YouTube Music menus and a focused Chrome side panel.
+The current track, play or pause state, and playback position stay synchronized across the room.
 
-TogetherTune only runs on `music.youtube.com` and communicates with its dedicated Cloudflare-hosted synchronization service. Creating or joining a party shares the display name you choose and party playback/queue information with other people in that party. Read the full privacy policy before installing.
+BUILD THE QUEUE TOGETHER
+
+Add songs directly from YouTube Music. Everyone sees one ordered queue, and listeners with permission can rearrange it.
+
+SET THE HOUSE RULES
+
+The host chooses whether guests can add songs, remove songs, or skip. If the host disconnects and does not return, TogetherTune can pass host controls to another connected listener.
+
+JOIN ON YOUR TERMS
+
+New listeners see what is playing before choosing Join playback. Reconnect and rejoin controls help everyone recover when a tab or connection drops.
+
+NO ACCOUNT REQUIRED
+
+TogetherTune does not request your Google account identity, email, password, payment information, or general browsing history.
+
+TogetherTune only runs on `music.youtube.com` and uses its dedicated Cloudflare-hosted service to operate each temporary party. Your chosen display name and the room's playback, queue, role, permission, and synchronization details are shared with the other people in that room. Read the privacy policy for full details.
 
 TogetherTune is an independent project and is not affiliated with, endorsed by, or sponsored by Google LLC.
 

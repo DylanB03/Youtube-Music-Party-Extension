@@ -1,20 +1,24 @@
 # Store artwork
 
-The PNG files in this directory are temporary submission placeholders and must be reviewed or replaced before a polished public launch.
+The PNG files in this directory form the TogetherTune Chrome Web Store artwork set. The visual system uses a warm, nocturnal palette and a two-listener pulse emblem. It is intentionally distinct from speech-bubble and music-note branding used by other listening-party extensions.
 
-Required targets:
+Submission assets:
 
-- `icon-128.png`: 128×128 store icon with approximately 16 px transparent padding.
-- `small-promo-440x280.png`: required small promotional tile.
-- `screenshot-1280x800.png`: setup flow using the real extension UI.
-- `screenshot-host-controls-1280x800.png`: host controls and shared queue.
-- `screenshot-guest-1280x800.png`: guest view after joining a party.
+- `icon-source-v3.svg`: exact flat-vector source for the brand mark.
+- `icon-128.png`: 128×128 store icon with transparent padding.
+- `small-promo-440x280.png`: 440×280 promotional tile.
+- `screenshot-1280x800.png`: create-party flow.
+- `screenshot-guest-1280x800.png`: invite-code and guest flow.
+- `screenshot-queue-1280x800.png`: shared queue.
+- `screenshot-sync-1280x800.png`: synchronized playback.
+- `screenshot-host-controls-1280x800.png`: host permissions.
 
-Regenerate all three screenshots against the configured production backend with:
+Regenerate the icon set, screenshots, and promotional tile with:
 
 ```sh
+npm run build:store-icon
 npm run build:extension
 npm run capture:store-screenshots
 ```
 
-Do not use Google, YouTube, or Chrome logos in replacement artwork.
+The capture script uses fictional song names and original geometric cover art so the screenshots do not depend on third-party album artwork. Do not add Google, YouTube, Chrome, or competitor logos to the artwork.

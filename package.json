@@ -17,6 +17,7 @@
     "dev:extension": "npm --workspace apps/extension run dev",
     "build:backend": "npm --workspace apps/backend run build",
     "build:extension": "npm --workspace apps/extension run build",
+    "build:store-icon": "node scripts/build-store-icon.mjs",
     "capture:store-screenshots": "node scripts/capture-store-screenshots.mjs",
     "verify:extension": "node scripts/verify-extension-package.mjs",
     "verify:release-version": "node scripts/verify-release-version.mjs",
