@@ -16,7 +16,9 @@ type Listener = (state: PartyRoomState) => void;
 type ErrorListener = (message: string) => void;
 type ConnectionStateListener = (state: ConnectionState) => void;
 const OPERATION_TIMEOUT_MS = 15_000;
-const CLOCK_RESYNC_INTERVAL_MS = 60_000;
+// WebSocket traffic must occur within Chrome's 30-second worker idle window,
+// including while the host is paused or a guest has not joined playback yet.
+const CLOCK_RESYNC_INTERVAL_MS = 20_000;
 const CLOCK_SYNC_BURST_SIZE = 5;
 const CLOCK_SAMPLE_WINDOW_SIZE = 8;
 const SOCKET_OPEN_TIMEOUT_MS = 10_000;

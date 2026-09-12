@@ -47,17 +47,29 @@ const controller = new PartyController(
 );
 
 export default defineBackground(() => {
+  const initialized = controller.initialize();
+  // Initialization starts immediately, before any event can replace or leave
+  // the saved session. Menu/panel setup must not delay restoration.
+  void initialized.catch(() => undefined);
   void initializeBackground();
 
   browser.runtime.onMessage.addListener((message: ExtensionRequest, sender, sendResponse) => {
-    void handleMessage(message, sender)
+    const bypassRestore = message.type === "party.prepareInvite" ||
+      message.type === "party.create" || message.type === "party.join" ||
+      message.type === "party.leave";
+    const response = bypassRestore
+      ? handleMessage(message, sender)
+      : initialized.then(() => handleMessage(message, sender));
+    void response
       .then((data) => sendResponse(ok(data)))
       .catch((caught: Error) => sendResponse(error(caught.message)));
     return true;
   });
 
   browser.commands.onCommand.addListener((command) => {
-    if (command === "rejoin-playback") void controller.joinPlayback();
+    if (command === "rejoin-playback") {
+      void controller.joinPlayback().catch(() => undefined);
+    }
   });
 });
 
@@ -68,7 +80,6 @@ async function initializeBackground(): Promise<void> {
 
   await browser.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
   installSidePanelGating();
-  await controller.initialize();
 }
 
 async function handleMessage(

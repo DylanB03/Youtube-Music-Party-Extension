@@ -28,12 +28,12 @@
       "binding": "INVITES",
       "id": "e2e-kv",
       "preview_id": "e2e-kv"
-    },
-    {
-      "binding": "RATE_LIMITS",
-      "id": "e2e-rate-limits-kv",
-      "preview_id": "e2e-rate-limits-kv"
     }
+  ],
+  "ratelimits": [
+    { "name": "CREATE_ROOM_RATE_LIMITER", "namespace_id": "19370201", "simple": { "limit": 10, "period": 60 } },
+    { "name": "JOIN_ROOM_RATE_LIMITER", "namespace_id": "19370202", "simple": { "limit": 30, "period": 60 } },
+    { "name": "API_RATE_LIMITER", "namespace_id": "19370203", "simple": { "limit": 60, "period": 60 } }
   ],
   "migrations": [
     {

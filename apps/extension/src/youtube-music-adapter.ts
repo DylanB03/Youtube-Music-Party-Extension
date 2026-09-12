@@ -11,12 +11,17 @@ import {
 import type { PlaybackApplicationResult } from "./playback-application";
 import { loadTrack, waitForMedia } from "./youtube-music/navigation";
 import {
+  ensureMediaPlaying,
+  shouldPauseForPlaybackApplication,
+} from "./youtube-music/media-control";
+import {
   getPagePlayerTrack,
   pausePagePlayer,
 } from "./youtube-music/page-bridge";
 import {
   PlaybackEndStallDetector,
   PlaybackTransitionDetector,
+  isMidTrackSeek,
   isNearTrackEnd,
 } from "./youtube-music/playback-transition";
 import {
@@ -53,7 +58,9 @@ export async function applyPlayback(
     await loadTrack(playback.track.videoId);
 
     const media = await waitForMedia();
-    media.pause();
+    if (shouldPauseForPlaybackApplication(playback)) {
+      media.pause();
+    }
     await waitForPlayableMedia(media);
     await seekMedia(
       media,
@@ -72,7 +79,7 @@ export async function applyPlayback(
           currentPlaybackPositionSeconds(playback, Date.now()),
         );
       }
-      await media.play();
+      await ensureMediaPlaying(media);
     }
     return "applied";
   } finally {
@@ -124,7 +131,13 @@ export function observePlayback(listener: Listener): () => void {
       if (isNearTrackEnd(playback)) nearNaturalEndLatch = true;
     };
     const onSeek = () => {
-      latchNearEnd();
+      const playback = readPlaybackState(lastPagePlayerTrack);
+      if (isMidTrackSeek(playback)) {
+        nearNaturalEndLatch = false;
+        transitions.observe(playback);
+      } else {
+        latchNearEnd();
+      }
       emit("local.seek");
     };
     const onEnded = () => {

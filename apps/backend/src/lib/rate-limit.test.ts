@@ -1,27 +1,17 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { enforceRateLimit } from "./rate-limit";
 import type { Env } from "../types";
 
-class FakeKv {
-  store = new Map<string, string>();
-  puts: { key: string; value: string }[] = [];
-
-  async get(key: string): Promise<string | null> {
-    return this.store.get(key) ?? null;
-  }
-
-  async put(key: string, value: string): Promise<void> {
-    this.puts.push({ key, value });
-    this.store.set(key, value);
-  }
-}
-
-function envWith(rateLimits: FakeKv): Env {
-  return {
-    RATE_LIMITS: rateLimits as unknown as KVNamespace,
-    INVITES: new FakeKv() as unknown as KVNamespace,
-    PARTY_ROOMS: {} as unknown as Env["PARTY_ROOMS"],
-  };
+function fixture() {
+  const create = vi.fn(async (_options: { key: string }) => ({ success: true }));
+  const join = vi.fn(async (_options: { key: string }) => ({ success: true }));
+  const api = vi.fn(async (_options: { key: string }) => ({ success: true }));
+  const env = {
+    CREATE_ROOM_RATE_LIMITER: { limit: create },
+    JOIN_ROOM_RATE_LIMITER: { limit: join },
+    API_RATE_LIMITER: { limit: api },
+  } as unknown as Env;
+  return { env, create, join, api };
 }
 
 function request(): Request {
@@ -32,38 +22,33 @@ function request(): Request {
 }
 
 describe("enforceRateLimit", () => {
-  it("allows requests under the limit and counts against a dedicated namespace", async () => {
-    const rateLimits = new FakeKv();
-    const env = envWith(rateLimits);
-
-    const first = await enforceRateLimit(request(), env, {
-      scope: "create-room",
-      limit: 2,
-      windowSeconds: 60,
-    });
-    const second = await enforceRateLimit(request(), env, {
-      scope: "create-room",
-      limit: 2,
-      windowSeconds: 60,
-    });
-
-    expect(first).toBeNull();
-    expect(second).toBeNull();
-    expect(rateLimits.puts).toHaveLength(2);
-    // Counters must not collide with invite-code keys.
-    expect(rateLimits.puts.every((entry) => entry.key.startsWith("create-room:"))).toBe(true);
+  it("allows consecutive requests without writing a KV counter", async () => {
+    const { env, join } = fixture();
+    expect(await enforceRateLimit(request(), env, { scope: "join-room" })).toBeNull();
+    expect(await enforceRateLimit(request(), env, { scope: "join-room" })).toBeNull();
+    expect(join).toHaveBeenCalledTimes(2);
+    expect(join).toHaveBeenCalledWith({ key: "ytm-party:join-room:203.0.113.5" });
   });
 
-  it("returns 429 once the window limit is exceeded", async () => {
-    const rateLimits = new FakeKv();
-    const env = envWith(rateLimits);
-    const options = { scope: "create-room", limit: 1, windowSeconds: 60 };
+  it("selects the configured budget and keeps API scopes independent", async () => {
+    const { env, create, join, api } = fixture();
+    await enforceRateLimit(request(), env, { scope: "create-room" });
+    await enforceRateLimit(request(), env, { scope: "connection-ticket" });
+    await enforceRateLimit(request(), env, { scope: "leave-room" });
 
-    const allowed = await enforceRateLimit(request(), env, options);
-    const blocked = await enforceRateLimit(request(), env, options);
+    expect(create).toHaveBeenCalledWith({ key: "ytm-party:create-room:203.0.113.5" });
+    expect(join).not.toHaveBeenCalled();
+    expect(api.mock.calls).toEqual([
+      [{ key: "ytm-party:connection-ticket:203.0.113.5" }],
+      [{ key: "ytm-party:leave-room:203.0.113.5" }],
+    ]);
+  });
 
-    expect(allowed).toBeNull();
-    expect(blocked?.status).toBe(429);
-    expect(blocked?.headers.get("Retry-After")).toBe("60");
+  it("returns 429 when the platform reports an exhausted budget", async () => {
+    const { env, create } = fixture();
+    create.mockResolvedValue({ success: false });
+    const response = await enforceRateLimit(request(), env, { scope: "create-room" });
+    expect(response?.status).toBe(429);
+    expect(response?.headers.get("Retry-After")).toBe("60");
   });
 });

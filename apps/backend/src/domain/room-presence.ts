@@ -10,7 +10,7 @@ export function nextPresenceAlarmAtMs(
   connectionCount: number,
   participantRetentionMs: number,
   lifecycle: RoomLifecycle,
-  preferredTime?: number,
+  hostReconnectGraceMs = 5_000,
 ): number {
   const cleanupTimes = room.participants
     .filter((participant) => participant.participantId !== room.hostParticipantId)
@@ -26,21 +26,34 @@ export function nextPresenceAlarmAtMs(
     lifecycle,
   );
   const playbackPreparationDeadline = room.playbackPreparation?.deadlineAtMs;
-  const candidates = preferredTime
-    ? [
-        preferredTime,
-        lifecycleExpiration,
-        ...(playbackPreparationDeadline === undefined
-          ? []
-          : [playbackPreparationDeadline]),
-        ...cleanupTimes,
-      ]
-    : [
-        lifecycleExpiration,
-        ...(playbackPreparationDeadline === undefined
-          ? []
-          : [playbackPreparationDeadline]),
-        ...cleanupTimes,
-      ];
+  const hostDeadline = hostTransferAtMs(
+    room,
+    connectedParticipantIds,
+    hostReconnectGraceMs,
+  );
+  const candidates = [
+    lifecycleExpiration,
+    ...(hostDeadline === undefined ? [] : [hostDeadline]),
+    ...(playbackPreparationDeadline === undefined ? [] : [playbackPreparationDeadline]),
+    ...cleanupTimes,
+  ];
   return Math.min(...candidates);
+}
+
+export function hostTransferAtMs(
+  room: PartyRoomState,
+  connectedParticipantIds: Set<string>,
+  graceMs: number,
+): number | undefined {
+  if (
+    room.hostDisconnectedAtMs === undefined ||
+    connectedParticipantIds.has(room.hostParticipantId)
+  ) return undefined;
+  // With no replacement, scheduling a past deadline would repeatedly wake the
+  // object. A later guest connection will schedule this deadline again.
+  if (!room.participants.some(
+    (participant) => participant.participantId !== room.hostParticipantId &&
+      connectedParticipantIds.has(participant.participantId),
+  )) return undefined;
+  return room.hostDisconnectedAtMs + graceMs;
 }

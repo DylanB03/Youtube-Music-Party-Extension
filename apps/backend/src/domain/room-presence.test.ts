@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { PartyRoomState } from "@ytm-party/shared";
-import { nextPresenceAlarmAtMs } from "./room-presence";
+import { hostTransferAtMs, nextPresenceAlarmAtMs } from "./room-presence";
 
 function createRoom(): PartyRoomState {
   return {
@@ -34,6 +34,22 @@ function createRoom(): PartyRoomState {
 }
 
 describe("room presence alarms", () => {
+  it("does not keep scheduling an expired host deadline without a replacement", () => {
+    const room = createRoom();
+    room.hostDisconnectedAtMs = 1_000;
+    room.participants = [{
+      participantId: "guest",
+      displayName: "Guest",
+      role: "guest",
+      syncStatus: "in_sync",
+      connectedAtMs: 1_000,
+      lastSeenAtMs: 1_000,
+    }];
+    expect(hostTransferAtMs(room, new Set(), 5_000)).toBeUndefined();
+    expect(hostTransferAtMs(room, new Set(["guest"]), 5_000)).toBe(6_000);
+    expect(hostTransferAtMs(room, new Set(["host", "guest"]), 5_000)).toBeUndefined();
+  });
+
   it("wakes the room at the playback preparation timeout", () => {
     expect(
       nextPresenceAlarmAtMs(

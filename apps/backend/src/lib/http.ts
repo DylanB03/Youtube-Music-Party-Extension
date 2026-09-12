@@ -19,11 +19,16 @@ export function jsonResponse(data: unknown, init?: ResponseInit): Response {
 }
 
 export async function parseJson<T>(request: Request): Promise<T> {
+  let body: unknown;
   try {
-    return (await request.json()) as T;
+    body = await request.json();
   } catch {
     throw new HttpError(400, "Request body must be valid JSON.");
   }
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    throw new HttpError(400, "Request body must be a JSON object.");
+  }
+  return body as T;
 }
 
 export function errorResponse(error: unknown): Response | null {

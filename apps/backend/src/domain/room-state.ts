@@ -62,7 +62,7 @@ export function applyRoomMutation(
       const remainingConnectedIds = new Set(connectedParticipantIds);
       remainingConnectedIds.delete(participantId);
       return {
-        changed: removeParticipant(state, participantId, remainingConnectedIds),
+        changed: removeParticipant(state, participantId, remainingConnectedIds, nowMs),
       };
     }
 
@@ -301,7 +301,7 @@ export function markParticipantDisconnected(
 ): boolean {
   touchParticipant(state, participantId, nowMs);
   if (participantId !== state.hostParticipantId) return false;
-  state.hostDisconnectedAtMs = nowMs;
+  state.hostDisconnectedAtMs ??= nowMs;
   return true;
 }
 
@@ -309,7 +309,7 @@ export function transferHost(
   state: PartyRoomState,
   connectedParticipantIds: Set<string>,
 ): boolean {
-  if (!state.hostDisconnectedAtMs) return false;
+  if (state.hostDisconnectedAtMs === undefined) return false;
   if (connectedParticipantIds.has(state.hostParticipantId)) {
     delete state.hostDisconnectedAtMs;
     return true;
@@ -342,6 +342,7 @@ export function removeParticipant(
   state: PartyRoomState,
   participantId: string,
   connectedParticipantIds: Set<string> = new Set(),
+  nowMs = Date.now(),
 ): boolean {
   const previousLength = state.participants.length;
   state.participants = state.participants.filter(
@@ -360,7 +361,13 @@ export function removeParticipant(
 
     if (replacement) {
       state.hostParticipantId = replacement.participantId;
-      delete state.hostDisconnectedAtMs;
+      if (connectedParticipantIds.has(replacement.participantId)) {
+        delete state.hostDisconnectedAtMs;
+      } else {
+        // An offline successor must remain eligible for takeover when another
+        // guest reconnects, even if the original host left voluntarily.
+        state.hostDisconnectedAtMs = nowMs;
+      }
     }
   }
 
@@ -555,7 +562,7 @@ function reorderQueue(state: PartyRoomState, queueItemIds: string[]): void {
   const byId = new Map(state.queue.map((item) => [item.id, item]));
   const reordered: QueueItem[] = [];
 
-  for (const id of queueItemIds) {
+  for (const id of new Set(queueItemIds)) {
     const item = byId.get(id);
     if (item) reordered.push(item);
   }

@@ -11,7 +11,7 @@ export class RoomConnections {
   constructor(private readonly state: DurableObjectState) {}
 
   get size(): number {
-    return this.state.getWebSockets().length;
+    return this.openSockets().length;
   }
 
   accept(socket: WebSocket, session: SessionMeta): void {
@@ -32,19 +32,18 @@ export class RoomConnections {
   }
 
   hasOtherParticipantSocket(participantId: string, excluding: WebSocket): boolean {
-    return this.state
-      .getWebSockets(participantId)
+    return this.openSockets(participantId)
       .some((socket) => socket !== excluding);
   }
 
   connectionCountExcluding(socket: WebSocket): number {
-    return this.state.getWebSockets().filter((candidate) => candidate !== socket)
+    return this.openSockets().filter((candidate) => candidate !== socket)
       .length;
   }
 
   participantIds(): Set<string> {
     const participantIds = new Set<string>();
-    for (const socket of this.state.getWebSockets()) {
+    for (const socket of this.openSockets()) {
       const meta = this.meta(socket);
       if (meta) participantIds.add(meta.participantId);
     }
@@ -88,5 +87,13 @@ export class RoomConnections {
     } catch {
       // The socket is mid-close; the runtime will surface a close event.
     }
+  }
+
+  private openSockets(tag?: string): WebSocket[] {
+    // getWebSockets can still include sockets during the close handshake.
+    // They must not suppress host takeover or keep an empty room alive.
+    return this.state.getWebSockets(tag).filter(
+      (socket) => socket.readyState === WebSocket.OPEN,
+    );
   }
 }

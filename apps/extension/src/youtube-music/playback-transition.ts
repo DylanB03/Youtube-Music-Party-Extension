@@ -32,6 +32,14 @@ export function isNearTrackEnd(playback: LocalPlaybackState): boolean {
   return false;
 }
 
+export function isMidTrackSeek(playback: LocalPlaybackState): boolean {
+  // YouTube's native auto-next can reset the old media to zero before its
+  // metadata switches. Preserve end evidence for that reset, but not for a
+  // seek back into the current song.
+  return Boolean(playback.durationSeconds) &&
+    playback.positionSeconds > 0 && !isNearTrackEnd(playback);
+}
+
 export class PlaybackEndStallDetector {
   private trackId: string | null = null;
   private lastPositionSeconds = 0;

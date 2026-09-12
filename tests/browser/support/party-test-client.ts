@@ -58,11 +58,15 @@ export class PartyTestClient {
   ): Promise<T> {
     const existing = this.messages.find(predicate);
     if (existing) return existing;
+    // Capture the caller here so a timeout points to the failed scenario, not
+    // just the timer callback. Include message kinds, never credentials.
+    const timeoutError = new Error("Timed out waiting for a party message.");
 
     return new Promise<T>((resolve, reject) => {
       const timeout = setTimeout(() => {
         this.listeners.delete(checkMessages);
-        reject(new Error("Timed out waiting for a party message."));
+        timeoutError.message += ` Received: ${this.messages.map((message) => message.type).join(", ") || "none"}.`;
+        reject(timeoutError);
       }, timeoutMs);
       const checkMessages = () => {
         const match = this.messages.find(predicate);

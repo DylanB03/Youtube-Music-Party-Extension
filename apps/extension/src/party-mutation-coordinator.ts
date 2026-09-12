@@ -7,8 +7,10 @@ import type {
 export class PartyMutationCoordinator {
   private acknowledgedRevision = 0;
   private chain: Promise<void> = Promise.resolve();
+  private generation = 0;
 
   reset(): void {
+    this.generation += 1;
     this.acknowledgedRevision = 0;
     this.chain = Promise.resolve();
   }
@@ -26,13 +28,16 @@ export class PartyMutationCoordinator {
     ) => MutationMessage,
   ): Promise<OperationResult> {
     let result: OperationResult | undefined;
+    const generation = this.generation;
     const execution = this.chain.then(async () => {
+      if (generation !== this.generation) throw new Error("The party session changed.");
       const operationId = crypto.randomUUID();
-      const expectedRevision = this.acknowledgedRevision || snapshotRevision;
+      const expectedRevision = Math.max(this.acknowledgedRevision, snapshotRevision);
       result = await connection.sendOperation(
         buildMessage(operationId, expectedRevision),
       );
-      this.acknowledgedRevision = result.revision;
+      if (generation !== this.generation) throw new Error("The party session changed.");
+      this.observeRevision(result.revision);
     });
     this.chain = execution.catch(() => undefined);
     await execution;

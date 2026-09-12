@@ -8,7 +8,9 @@ import {
   removeParticipant,
   removeInactiveParticipants,
   transferHost,
+  upsertConnectedParticipant,
 } from "./room-state";
+import { hostTransferAtMs } from "./room-presence";
 
 function createRoomState(): PartyRoomState {
   return {
@@ -50,6 +52,38 @@ function createRoomState(): PartyRoomState {
 }
 
 describe("party room mutations", () => {
+  it("keeps an offline host successor eligible for takeover after another guest reconnects", () => {
+    const state = createRoomState();
+    state.participants.push({
+      ...state.participants[1]!,
+      participantId: "later-guest",
+      connectedAtMs: 300,
+    });
+    removeParticipant(state, "host", new Set(), 1_000);
+    expect(state.hostParticipantId).toBe("guest");
+    expect(state.hostDisconnectedAtMs).toBe(1_000);
+    upsertConnectedParticipant(state, "later-guest", "Later Guest", 7_000);
+    const connected = new Set(["later-guest"]);
+    expect(hostTransferAtMs(state, connected, 5_000)).toBe(6_000);
+    expect(transferHost(state, connected)).toBe(true);
+    expect(state.hostParticipantId).toBe("later-guest");
+  });
+
+  it("does not extend host reconnect grace on duplicate disconnect notifications", () => {
+    const state = createRoomState();
+    markParticipantDisconnected(state, "host", 0);
+    markParticipantDisconnected(state, "host", 1_000);
+    expect(state.hostDisconnectedAtMs).toBe(0);
+    expect(transferHost(state, new Set(["guest"]))).toBe(true);
+  });
+
+  it("keeps queue items unique when reordered IDs repeat or omit existing items", () => {
+    const state = createRoomState();
+    state.queue = ["one", "two"].map((id) => ({ id, track: { videoId: id }, addedByParticipantId: "host", addedAtMs: 1_000 }));
+    applyRoomMutation(state, { type: "queue.reorder", operationId: "reorder", expectedRevision: 4, queueItemIds: ["two", "two", "missing"] }, "guest", 2_000, () => "unused", { maxQueueItems: 2 });
+    expect(state.queue.map((item) => item.id)).toEqual(["two", "one"]);
+  });
+
   it("allows guest queue additions when enabled", () => {
     const state = createRoomState();
     const result = applyRoomMutation(

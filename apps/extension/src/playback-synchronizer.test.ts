@@ -93,6 +93,66 @@ function canonicalPlayback(): PartyPlaybackState {
 }
 
 describe("PlaybackSynchronizer application verification", () => {
+  it("does not retry an old-room command after the session is reset", async () => {
+    const tabs = new VerificationTabs();
+    tabs.positionOffsetSeconds = 1;
+    const originalApply = tabs.applyPlayback.bind(tabs);
+    let release!: () => void;
+    vi.spyOn(tabs, "applyPlayback").mockImplementationOnce(async (playback) => {
+      await new Promise<void>((resolve) => { release = resolve; });
+      return originalApply(playback);
+    });
+    const synchronizer = new PlaybackSynchronizer(tabs);
+    const applying = synchronizer.apply(activeSession(canonicalPlayback()));
+    synchronizer.reset();
+    release();
+    expect(await applying).toBe("deferred");
+    expect(tabs.applyCount).toBe(1);
+  });
+
+  it("waits for same-track buffering without restarting the player", async () => {
+    const tabs = new VerificationTabs();
+    const canonical = canonicalPlayback();
+    tabs.local = { ...tabs.local, track: canonical.track, paused: true, buffering: true };
+    const synchronizer = new PlaybackSynchronizer(tabs);
+
+    expect(await synchronizer.reconcile(activeSession(canonical))).toBe("deferred");
+    expect(tabs.applyCount).toBe(0);
+  });
+
+  it("does not verify buffered or interrupted media as prepared playback", async () => {
+    const canonical = { ...canonicalPlayback(), paused: true };
+    for (const interruption of [undefined, "advertisement"] as const) {
+      const tabs = new VerificationTabs();
+      tabs.acceptPlayback = false;
+      tabs.local = {
+        track: canonical.track, paused: true, positionSeconds: 0,
+        buffering: true, interruption,
+      };
+      const synchronizer = new PlaybackSynchronizer(tabs);
+      expect(await synchronizer.apply(activeSession(canonical))).toBe("deferred");
+      expect(tabs.applyCount).toBe(1);
+    }
+  });
+
+  it("finishes a join against the latest track if the room changes during loading", async () => {
+    const tabs = new VerificationTabs();
+    const originalApply = tabs.applyPlayback.bind(tabs);
+    let release!: () => void;
+    vi.spyOn(tabs, "applyPlayback").mockImplementationOnce(async (playback) => {
+      await new Promise<void>((resolve) => { release = resolve; });
+      return originalApply(playback);
+    });
+    const session = activeSession(canonicalPlayback());
+    const synchronizer = new PlaybackSynchronizer(tabs);
+    const joining = synchronizer.apply(session);
+    session.state!.playback = { ...canonicalPlayback(), track: { videoId: "new-track" } };
+    release();
+
+    expect(await joining).toBe("applied");
+    expect(tabs.local.track?.videoId).toBe("new-track");
+  });
+
   it("reports applied only after reading back matching playback", async () => {
     const tabs = new VerificationTabs();
     const synchronizer = new PlaybackSynchronizer(tabs);

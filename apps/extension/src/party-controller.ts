@@ -14,7 +14,11 @@ import {
   localToPartyPlayback,
   playbackKey,
 } from "./playback-policy";
-import { isNearTrackEnd, looksLikeNaturalTrackAdvance } from "./youtube-music/playback-transition";
+import {
+  isMidTrackSeek,
+  isNearTrackEnd,
+  looksLikeNaturalTrackAdvance,
+} from "./youtube-music/playback-transition";
 import type { PlaybackApplicationResult } from "./playback-application";
 import { PartyMutationCoordinator } from "./party-mutation-coordinator";
 import {
@@ -77,6 +81,7 @@ const PLAYBACK_FAILURES_BEFORE_MANUAL_RECOVERY = 3;
 
 export class PartyController {
   private session: ActiveSession | null = null;
+  private sessionGeneration = 0;
   private terminalError: string | undefined;
   private partyTabId: number | null = null;
   private lastAutoAdvanceKey: string | null = null;
@@ -109,15 +114,20 @@ export class PartyController {
   }
 
   async initialize(): Promise<void> {
+    const generation = this.sessionGeneration;
     const saved = await this.storage.load();
-    if (!saved) return;
+    if (!saved || this.session || generation !== this.sessionGeneration) return;
     await this.connect(saved);
   }
 
   async createParty(displayName: string): Promise<SessionView> {
+    const generation = ++this.sessionGeneration;
     this.terminalError = undefined;
-    this.partyTabId = await this.tabs.resolveActivePartyTabId();
+    const tabId = await this.tabs.resolveActivePartyTabId();
+    if (generation !== this.sessionGeneration) return this.getView();
+    this.partyTabId = tabId;
     const local = await this.tabs.getPlayback(this.partyTabId ?? undefined);
+    if (generation !== this.sessionGeneration) return this.getView();
     const initialPlayback: PartyPlaybackState = {
       track: local.track,
       paused: local.paused,
@@ -125,6 +135,14 @@ export class PartyController {
       effectiveAtMs: Date.now(),
     };
     const created = await this.api.createRoom(displayName, initialPlayback);
+    if (generation !== this.sessionGeneration) {
+      void this.api.leaveRoom(
+        created.roomId,
+        created.participantId,
+        created.participantToken,
+      ).catch(() => undefined);
+      return this.getView();
+    }
     await this.connect({
       roomId: created.roomId,
       participantId: created.participantId,
@@ -136,9 +154,20 @@ export class PartyController {
   }
 
   async joinParty(inviteCode: string, displayName: string): Promise<SessionView> {
+    const generation = ++this.sessionGeneration;
     this.terminalError = undefined;
-    this.partyTabId = await this.tabs.resolveActivePartyTabId();
+    const tabId = await this.tabs.resolveActivePartyTabId();
+    if (generation !== this.sessionGeneration) return this.getView();
+    this.partyTabId = tabId;
     const joined = await this.api.joinRoom(inviteCode, displayName);
+    if (generation !== this.sessionGeneration) {
+      void this.api.leaveRoom(
+        joined.roomId,
+        joined.participantId,
+        joined.participantToken,
+      ).catch(() => undefined);
+      return this.getView();
+    }
     await this.connect({
       roomId: joined.roomId,
       participantId: joined.participantId,
@@ -150,6 +179,7 @@ export class PartyController {
   }
 
   async leaveParty(): Promise<SessionView> {
+    this.sessionGeneration += 1;
     const session = this.session;
     // Start remote cleanup while the credentials are still available, but
     // never let network or room state gate the user's local escape hatch.
@@ -181,10 +211,25 @@ export class PartyController {
     if (this.session !== session) return this.getView();
     this.reportPreparedPlaybackReady(session.state, result);
     if (result === "applied") {
+      session.lastError = undefined;
+      this.resetPlaybackFailures();
       if (session.state?.hostParticipantId === session.participantId) {
         this.clearAutoAdvanceAfterCanonicalApply(session.state, result);
       }
       await this.setLocalSyncStatus("in_sync");
+    } else if (result === "out_of_sync" || result === "deferred") {
+      const message =
+        result === "deferred"
+          ? "YouTube Music is still buffering or playing an ad. Wait for the song to start, then try Rejoin playback."
+          : "The party track loaded, but YouTube Music did not start it in sync. Start the song in YouTube Music, then try Rejoin playback.";
+      session.lastError = message;
+      await this.setLocalSyncStatus("out_of_sync");
+      throw new Error(message);
+    } else if (result === "track_unavailable") {
+      const message = "YouTube Music could not load the party track. Try again.";
+      session.lastError = message;
+      await this.setLocalSyncStatus("track_unavailable");
+      throw new Error(message);
     } else {
       await this.handlePlaybackResult(result);
     }
@@ -293,7 +338,7 @@ export class PartyController {
   }
 
   async handleContentReady(tabId?: number): Promise<void> {
-    this.adoptPartyTab(tabId);
+    if (!this.adoptOrMatchesPartyTab(tabId)) return;
     const status = this.session?.localSyncStatus;
     if (status !== "navigating" && status !== "in_sync") return;
     const session = this.requireSession();
@@ -417,8 +462,7 @@ export class PartyController {
       // Snapshot handlers can overlap while YouTube Music is navigating. A
       // result started for an older snapshot must not clear transition guards
       // or change recovery state for the newer canonical song.
-      if (session.state !== state) {
-        this.reportPreparedPlaybackReady(session.state, result);
+      if (playbackKey(session.state!.playback) !== playbackKey(state.playback)) {
         this.publishState();
         return;
       }
@@ -516,6 +560,13 @@ export class PartyController {
     const previousLocal = this.lastHostLocalPlayback;
     this.lastHostLocalPlayback = event.playback;
     const canonical = session.state?.playback;
+    if (
+      event.type === "local.seek" &&
+      event.playback.track?.videoId === canonical?.track?.videoId &&
+      isMidTrackSeek(event.playback)
+    ) {
+      this.hostCanonicalMaxPositionSeconds = event.playback.positionSeconds;
+    }
     if (canonical) this.recordHostCanonicalProgress(event.playback, canonical);
 
     // While waiting for the host to select Resume, their local playback is
@@ -667,6 +718,7 @@ export class PartyController {
   }
 
   private resetPlaybackRuntimeState(): void {
+    this.playback.reset();
     this.cancelDeferredExternalNavigation();
     this.stopLocalDriftMonitor();
     this.lastAutoAdvanceKey = null;
@@ -679,6 +731,7 @@ export class PartyController {
     this.lastHostLocalPlayback = null;
     this.lastLocalDriftCorrectionAtMs = 0;
     this.guestAdBreakActive = false;
+    this.lastPlaybackReadyId = null;
     this.resetPlaybackFailures();
   }
 
@@ -714,16 +767,19 @@ export class PartyController {
     }
 
     this.localDriftMonitorInFlight = true;
+    const state = session.state;
     try {
       const result = await this.playback.reconcile(
         session,
         this.partyTabId ?? undefined,
       );
       if (this.session !== session) return;
+      if (playbackKey(session.state!.playback) !== playbackKey(state.playback)) return;
       if (result !== "unchanged") {
         this.lastLocalDriftCorrectionAtMs = Date.now();
       }
       await this.handlePlaybackResult(result);
+      this.reportPreparedPlaybackReady(state, result);
     } finally {
       this.localDriftMonitorInFlight = false;
     }
@@ -867,13 +923,14 @@ export class PartyController {
     const pending = this.pendingAutoAdvance;
     if (!pending) return;
     if (state.revision <= pending.revision) return;
-    if (result === "track_unavailable" || result === "navigating") return;
+    if (result !== "applied" && result !== "unchanged" && result !== "correcting") return;
     this.pendingAutoAdvance = null;
   }
 
   private async handleGuestPlaybackEvent(event: LocalPlaybackEvent): Promise<void> {
     const session = this.session;
     if (!session) return;
+    if (session.localSyncStatus !== "in_sync") return;
 
     if (event.playback.interruption === "advertisement") {
       this.guestAdBreakActive = true;
@@ -896,8 +953,6 @@ export class PartyController {
       }
       return;
     }
-
-    if (session.localSyncStatus !== "in_sync") return;
 
     const decision = this.playback.decideGuestAction(event, session);
     switch (decision) {

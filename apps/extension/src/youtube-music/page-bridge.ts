@@ -93,17 +93,19 @@ export function installPageBridgeListener(): void {
   };
 
   const getApp = (): PageApp | null => document.querySelector("ytmusic-app");
-  const getTrack = (): Track | null => {
+  const getTrack = (allowUrlFallback = true): Track | null => {
     const app = getApp();
     const videoData = app?.playerApi?.getVideoData?.();
     const playerResponse = app?.playerApi?.getPlayerResponse?.();
     return resolvePagePlayerTrack(
       videoData,
       playerResponse,
-      new URL(location.href).searchParams.get("v"),
+      allowUrlFallback ? new URL(location.href).searchParams.get("v") : null,
     );
   };
-  const getVideoId = (): string | null => getTrack()?.videoId ?? null;
+  // Navigation needs player evidence: the watch URL can change before the
+  // player has accepted the requested song.
+  const getVideoId = (): string | null => getTrack(false)?.videoId ?? null;
 
   window.addEventListener(PAGE_BRIDGE_REQUEST_EVENT, (event: Event) => {
     const detail = (

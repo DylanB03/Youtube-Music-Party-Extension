@@ -6,6 +6,7 @@ import {
   type JoinRoomResponse,
   type ResolveCodeResponse,
   emptyPlayback,
+  isPartyPlaybackState,
 } from "@ytm-party/shared";
 import { errorResponse, jsonResponse, parseJson } from "./lib/http";
 import {
@@ -60,8 +61,6 @@ async function route(request: Request, env: Env): Promise<Response> {
   if (request.method === "POST" && url.pathname === "/rooms") {
     const limited = await enforceRateLimit(request, env, {
       scope: "create-room",
-      limit: 10,
-      windowSeconds: 60,
     });
     if (limited) return limited;
     return createRoom(request, env);
@@ -70,8 +69,6 @@ async function route(request: Request, env: Env): Promise<Response> {
   if (request.method === "POST" && url.pathname === "/rooms/join") {
     const limited = await enforceRateLimit(request, env, {
       scope: "join-room",
-      limit: 30,
-      windowSeconds: 60,
     });
     if (limited) return limited;
     return joinRoom(request, env);
@@ -80,8 +77,6 @@ async function route(request: Request, env: Env): Promise<Response> {
   if (request.method === "GET" && url.pathname.startsWith("/rooms/resolve/")) {
     const limited = await enforceRateLimit(request, env, {
       scope: "resolve-room",
-      limit: 60,
-      windowSeconds: 60,
     });
     if (limited) return limited;
     return resolveInviteCode(url, env);
@@ -91,8 +86,6 @@ async function route(request: Request, env: Env): Promise<Response> {
   if (request.method === "POST" && ticketMatch?.[1]) {
     const limited = await enforceRateLimit(request, env, {
       scope: "connection-ticket",
-      limit: 60,
-      windowSeconds: 60,
     });
     if (limited) return limited;
     return createConnectionTicket(request, env, ticketMatch[1]);
@@ -102,8 +95,6 @@ async function route(request: Request, env: Env): Promise<Response> {
   if (request.method === "POST" && leaveMatch?.[1]) {
     const limited = await enforceRateLimit(request, env, {
       scope: "leave-room",
-      limit: 60,
-      windowSeconds: 60,
     });
     if (limited) return limited;
     return leaveRoom(request, env, leaveMatch[1]);
@@ -120,6 +111,9 @@ async function route(request: Request, env: Env): Promise<Response> {
 
 async function createRoom(request: Request, env: Env): Promise<Response> {
   const body = await parseJson<CreateRoomRequest>(request);
+  if (body.initialPlayback != null && !isPartyPlaybackState(body.initialPlayback)) {
+    return jsonResponse({ error: "Initial playback is invalid" }, { status: 400 });
+  }
   const limits = readRoomLimits(env);
   const displayName = normalizeDisplayName(
     body.displayName,
@@ -137,7 +131,7 @@ async function createRoom(request: Request, env: Env): Promise<Response> {
   const room = env.PARTY_ROOMS.get(id);
   const nowMs = Date.now();
 
-  await room.fetch("https://party-room.local/initialize", {
+  const initialized = await room.fetch("https://party-room.local/initialize", {
     method: "POST",
     body: JSON.stringify({
       roomId,
@@ -149,6 +143,7 @@ async function createRoom(request: Request, env: Env): Promise<Response> {
       nowMs,
     }),
   });
+  if (!initialized.ok) return initialized;
 
   await env.INVITES.put(inviteCode, roomId, {
     expirationTtl: readPositiveInteger(
@@ -170,7 +165,9 @@ async function createRoom(request: Request, env: Env): Promise<Response> {
 
 async function joinRoom(request: Request, env: Env): Promise<Response> {
   const body = await parseJson<JoinRoomRequest>(request);
-  const inviteCode = body.inviteCode?.toUpperCase();
+  const inviteCode = typeof body.inviteCode === "string"
+    ? body.inviteCode.toUpperCase()
+    : "";
   if (!inviteCode) {
     return jsonResponse({ error: "Missing invite code" }, { status: 400 });
   }

@@ -53,7 +53,7 @@ describe("PartyClient clock synchronization", () => {
     vi.restoreAllMocks();
   });
 
-  it("takes a clock-sample burst on connection and refreshes once per minute", async () => {
+  it("refreshes the clock within Chrome's idle window even without playback events", async () => {
     vi.useFakeTimers();
     vi.stubGlobal("WebSocket", FakeWebSocket);
 
@@ -82,7 +82,7 @@ describe("PartyClient clock synchronization", () => {
       "clock.ping",
     ]);
 
-    await vi.advanceTimersByTimeAsync(59_999);
+    await vi.advanceTimersByTimeAsync(19_999);
     expect(
       socket.sentMessages.filter((message) => JSON.parse(message).type === "clock.ping"),
     ).toHaveLength(5);
@@ -93,6 +93,8 @@ describe("PartyClient clock synchronization", () => {
     ).toHaveLength(10);
 
     client.disconnect();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(socket.sentMessages).toHaveLength(11);
   });
 
   it("marks invalid participant credentials as an expired session", async () => {

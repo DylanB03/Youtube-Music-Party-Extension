@@ -33,7 +33,7 @@ import {
 } from "./domain/room-auth";
 import { RoomConnections } from "./domain/room-connections";
 import { processRoomMessage } from "./domain/room-message-processor";
-import { nextPresenceAlarmAtMs } from "./domain/room-presence";
+import { hostTransferAtMs, nextPresenceAlarmAtMs } from "./domain/room-presence";
 import { jsonResponse } from "./lib/http";
 import { generateId, generateToken } from "./lib/ids";
 import { readPositiveInteger } from "./lib/config";
@@ -100,7 +100,12 @@ export class PartyRoom {
 
     const connectedIds = this.connections.participantIds();
     const playbackStarted = releasePreparedPlayback(this.roomState, nowMs);
-    const hostChanged = this.roomState.hostDisconnectedAtMs
+    const hostDeadline = hostTransferAtMs(
+      this.roomState,
+      connectedIds,
+      this.getHostReconnectGraceMs(),
+    );
+    const hostChanged = hostDeadline !== undefined && nowMs >= hostDeadline
       ? transferHost(this.roomState, connectedIds)
       : false;
     const participantsRemoved = removeInactiveParticipants(
@@ -284,6 +289,7 @@ export class PartyRoom {
       this.roomState,
       body.participantId,
       connectedParticipantIds,
+      body.nowMs,
     );
     removeParticipantAuth(this.roomAuth, body.participantId);
     this.connections.closeParticipant(body.participantId, 1000, "Participant left");
@@ -413,7 +419,7 @@ export class PartyRoom {
       return;
     }
 
-    const hostDisconnected = markParticipantDisconnected(
+    markParticipantDisconnected(
       this.roomState,
       session.participantId,
       Date.now(),
@@ -422,15 +428,7 @@ export class PartyRoom {
       this.roomState.lastActivityAtMs = Date.now();
     }
     await this.commitAndBroadcast();
-    await this.scheduleNextPresenceAlarm(
-      hostDisconnected
-        ? Date.now() +
-            readPositiveInteger(
-              this.env.HOST_RECONNECT_GRACE_MS,
-              DEFAULT_HOST_RECONNECT_GRACE_MS,
-            )
-        : undefined,
-    );
+    await this.scheduleNextPresenceAlarm();
   }
 
   private async commitAndBroadcast(): Promise<void> {
@@ -455,7 +453,7 @@ export class PartyRoom {
     removeOrphanedParticipantTokens(this.roomAuth, activeParticipantIds);
   }
 
-  private async scheduleNextPresenceAlarm(preferredTime?: number): Promise<void> {
+  private async scheduleNextPresenceAlarm(): Promise<void> {
     if (!this.roomState) return;
     const alarmAtMs = nextPresenceAlarmAtMs(
       this.roomState,
@@ -463,9 +461,16 @@ export class PartyRoom {
       this.connections.size,
       PARTICIPANT_RETENTION_MS,
       this.getLifecycle(),
-      preferredTime,
+      this.getHostReconnectGraceMs(),
     );
     await this.state.storage.setAlarm(alarmAtMs);
+  }
+
+  private getHostReconnectGraceMs(): number {
+    return readPositiveInteger(
+      this.env.HOST_RECONNECT_GRACE_MS,
+      DEFAULT_HOST_RECONNECT_GRACE_MS,
+    );
   }
 
   private getLifecycle(): RoomLifecycle {
@@ -487,12 +492,14 @@ export class PartyRoom {
 
   private async expireRoom(): Promise<void> {
     const inviteCode = this.roomState?.inviteCode;
+    // External KV cleanup yields to other requests. Close the room before
+    // awaiting it so a concurrent join cannot write deleted room state back.
+    this.roomState = null;
+    this.roomAuth = null;
     this.connections.closeAll(1001, "Party expired");
     const cleanupTasks: Promise<unknown>[] = [this.state.storage.deleteAll()];
     if (inviteCode) cleanupTasks.push(this.env.INVITES.delete(inviteCode));
     await Promise.all(cleanupTasks);
-    this.roomState = null;
-    this.roomAuth = null;
   }
 
   private broadcastSnapshot(): void {

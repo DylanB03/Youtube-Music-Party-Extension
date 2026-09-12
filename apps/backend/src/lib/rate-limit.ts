@@ -1,9 +1,12 @@
 import type { Env } from "../types";
 
 type RateLimitOptions = {
-  scope: string;
-  limit: number;
-  windowSeconds: number;
+  scope:
+    | "create-room"
+    | "join-room"
+    | "resolve-room"
+    | "connection-ticket"
+    | "leave-room";
 };
 
 export async function enforceRateLimit(
@@ -15,11 +18,16 @@ export async function enforceRateLimit(
     request.headers.get("CF-Connecting-IP") ??
     request.headers.get("X-Forwarded-For")?.split(",")[0]?.trim() ??
     "local";
-  const windowId = Math.floor(Date.now() / (options.windowSeconds * 1000));
-  const key = `${options.scope}:${clientAddress}:${windowId}`;
-  const current = Number((await env.RATE_LIMITS.get(key)) ?? "0");
+  const limiter = options.scope === "create-room"
+    ? env.CREATE_ROOM_RATE_LIMITER
+    : options.scope === "join-room"
+      ? env.JOIN_ROOM_RATE_LIMITER
+      : env.API_RATE_LIMITER;
+  const { success } = await limiter.limit({
+    key: `ytm-party:${options.scope}:${clientAddress}`,
+  });
 
-  if (current >= options.limit) {
+  if (!success) {
     return new Response(
       JSON.stringify({
         error: "Too many requests. Please try again shortly.",
@@ -28,14 +36,11 @@ export async function enforceRateLimit(
         status: 429,
         headers: {
           "Content-Type": "application/json",
-          "Retry-After": String(options.windowSeconds),
+          "Retry-After": "60",
         },
       },
     );
   }
 
-  await env.RATE_LIMITS.put(key, String(current + 1), {
-    expirationTtl: options.windowSeconds * 2,
-  });
   return null;
 }

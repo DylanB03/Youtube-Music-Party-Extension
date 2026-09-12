@@ -272,6 +272,72 @@ async function flushControllerWork(): Promise<void> {
 }
 
 describe("party controller orchestration", () => {
+  it.each(["leave", "join"])("does not restore an old session after a newer %s action", async (action) => {
+    const old: StoredSession = { roomId: "old", participantId: "guest", participantToken: "token", displayName: "Guest", localSyncStatus: "ready_to_join" };
+    const storage = new FakeStorage(old);
+    let finishLoad!: (saved: StoredSession) => void;
+    vi.spyOn(storage, "load").mockImplementation(() => new Promise((resolve) => { finishLoad = resolve; }));
+    const connection = new FakeConnection();
+    const controller = new PartyController({
+      createRoom: vi.fn(), leaveRoom: vi.fn(async () => undefined),
+      joinRoom: vi.fn(async () => ({ roomId: "new", participantId: "guest-new", participantToken: "new-token", inviteCode: "NEW123" })),
+    }, storage, new FakeTabs(), () => connection, () => undefined);
+    const initializing = controller.initialize();
+    if (action === "leave") await controller.leaveParty();
+    else await controller.joinParty("NEW123", "Guest");
+    finishLoad(old);
+    await initializing;
+    expect(controller.getView().roomId).toBe(action === "leave" ? null : "new");
+    expect(storage.saved?.roomId ?? null).toBe(action === "leave" ? null : "new");
+    await controller.leaveParty();
+  });
+
+  it("does not join playback just because a guest's advertisement ends", async () => {
+    const { controller, tabs } = await createGuestController("ready_to_join");
+    await controller.handleLocalPlaybackEvent({
+      type: "local.interruption",
+      playback: { ...tabs.playback, interruption: "advertisement" },
+    });
+    await controller.handleLocalPlaybackEvent({ type: "local.progress", playback: tabs.playback });
+    expect(tabs.applied).toEqual([]);
+    expect(controller.getView().localSyncStatus).toBe("ready_to_join");
+  });
+
+  it("does not acknowledge a new preparation from an older track's completion", async () => {
+    const { controller, connection, tabs } = await createGuestController();
+    const originalApply = tabs.applyPlayback.bind(tabs);
+    let releaseOld!: () => void;
+    let releaseNew!: () => void;
+    vi.spyOn(tabs, "applyPlayback")
+      .mockImplementationOnce(async (playback) => {
+        await new Promise<void>((resolve) => { releaseOld = resolve; });
+        return originalApply(playback);
+      })
+      .mockImplementationOnce(async (playback) => {
+        await new Promise<void>((resolve) => { releaseNew = resolve; });
+        return originalApply(playback);
+      });
+    const prepare = (id: string): PartyRoomState => ({
+      ...roomState(),
+      playback: { track: { videoId: id }, paused: true, positionSeconds: 0, effectiveAtMs: Date.now(), playbackId: id },
+      playbackPreparation: { playbackId: id, deadlineAtMs: Date.now() + 8_000, eligibleParticipantIds: ["guest"], readyParticipantIds: [] },
+    });
+    connection.sent = [];
+    connection.emitSnapshot(prepare("old"));
+    await flushControllerWork();
+    connection.emitSnapshot(prepare("new"));
+    await flushControllerWork();
+    releaseOld();
+    await flushControllerWork();
+    await flushControllerWork();
+    expect(connection.sent).not.toContainEqual({ type: "playback.ready", playbackId: "new" });
+    releaseNew();
+    await flushControllerWork();
+    await flushControllerWork();
+    expect(connection.sent).toContainEqual({ type: "playback.ready", playbackId: "new" });
+    await controller.leaveParty();
+  });
+
   it("does not let a guest track-ended event advance the shared queue", async () => {
     const { controller, connection } = await createGuestController();
     connection.sent = [];
@@ -508,6 +574,44 @@ describe("party controller orchestration", () => {
       connection.sent.filter((message) => message.type === "playback.skip"),
     ).toHaveLength(0);
     expect(controller.getView().localSyncStatus).toBe("in_sync");
+  });
+
+  it("reports a failed manual rejoin instead of claiming the guest is in sync", async () => {
+    const { controller, connection, tabs } =
+      await createGuestController("ready_to_join");
+    tabs.positionOffsetSeconds = 1;
+    connection.sent = [];
+
+    await expect(controller.joinPlayback()).rejects.toThrow(
+      "The party track loaded, but YouTube Music did not start it in sync.",
+    );
+
+    expect(controller.getView().localSyncStatus).toBe("out_of_sync");
+    tabs.positionOffsetSeconds = 0;
+    const recovered = await controller.joinPlayback();
+    expect(recovered.localSyncStatus).toBe("in_sync");
+    expect(recovered.lastError).toBeUndefined();
+    expect(connection.sent).toContainEqual({
+      type: "participant.status",
+      syncStatus: "out_of_sync",
+    });
+  });
+
+  it("reports an unavailable track when a manual rejoin never loads it", async () => {
+    const { controller, connection, tabs } =
+      await createGuestController("ready_to_join");
+    tabs.failApply = true;
+    connection.sent = [];
+
+    await expect(controller.joinPlayback()).rejects.toThrow(
+      "YouTube Music could not load the party track.",
+    );
+
+    expect(controller.getView().localSyncStatus).toBe("track_unavailable");
+    expect(connection.sent).toContainEqual({
+      type: "participant.status",
+      syncStatus: "track_unavailable",
+    });
   });
 
   it("locally corrects guest drift from the monitor without backend status spam", async () => {
@@ -1333,6 +1437,35 @@ describe("party controller orchestration", () => {
     expect(
       connection.sent.filter((message) => message.type === "playback.host_requeue"),
     ).toHaveLength(0);
+  });
+
+  it("does not skip the party queue after the host seeks back and chooses another song", async () => {
+    vi.useFakeTimers();
+    try {
+      const { controller, connection } = await createHostController();
+      const playback = {
+        track: { videoId: "current-track" },
+        paused: false,
+        positionSeconds: 178,
+        durationSeconds: 180,
+        buffering: false,
+      };
+      await controller.handleLocalPlaybackEvent({ type: "local.progress", playback });
+      await controller.handleLocalPlaybackEvent({
+        type: "local.seek",
+        playback: { ...playback, positionSeconds: 10 },
+      });
+      connection.sent = [];
+      await controller.handleLocalPlaybackEvent({
+        type: "local.track_changed",
+        playback: { ...playback, track: { videoId: "manually-selected" }, positionSeconds: 0 },
+      });
+      await vi.advanceTimersByTimeAsync(1_500);
+      expect(connection.sent.filter((message) => message.type === "playback.skip")).toHaveLength(0);
+      expect(connection.sent.filter((message) => message.type === "playback.host_requeue")).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("restores the canonical host song instead of skipping on stale wrong-track progress", async () => {

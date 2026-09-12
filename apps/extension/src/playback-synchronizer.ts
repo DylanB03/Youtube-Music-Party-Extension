@@ -32,17 +32,24 @@ export type PlaybackSyncResult =
   | "applied"
   | "unchanged"
   | "correcting"
+  | "deferred"
   | "navigating"
   | "out_of_sync"
   | "track_unavailable";
 
 export class PlaybackSynchronizer {
+  private generation = 0;
   private applicationInFlight: {
+    session: ActiveSession;
     key: string;
     promise: Promise<PlaybackSyncResult>;
   } | null = null;
 
   constructor(private readonly tabs: PlaybackTabPort) {}
+
+  reset(): void {
+    this.generation += 1;
+  }
 
   decideGuestAction(
     event: LocalPlaybackEvent,
@@ -60,7 +67,27 @@ export class PlaybackSynchronizer {
   ): Promise<PlaybackSyncResult> {
     const canonical = session.state?.playback;
     if (!canonical) return "unchanged";
-    const local = await this.tabs.getPlayback(tabId);
+    if (this.applicationInFlight) return this.apply(session, tabId);
+    const generation = this.generation;
+    let local: LocalPlaybackState;
+    try {
+      local = await this.tabs.getPlayback(tabId);
+    } catch {
+      return "track_unavailable";
+    }
+    if (generation !== this.generation) return "deferred";
+    if (playbackKey(canonical) !== playbackKey(session.state!.playback)) {
+      return this.reconcile(session, tabId);
+    }
+    if (local.interruption === "advertisement") return "deferred";
+    if (local.interruption === "unavailable") return "track_unavailable";
+    if (
+      canonical.track &&
+      local.track?.videoId === canonical.track.videoId &&
+      local.buffering
+    ) {
+      return "deferred";
+    }
     if (!canonical.track) {
       if (!local.track || local.paused) return "unchanged";
       return this.apply(session, tabId);
@@ -107,31 +134,44 @@ export class PlaybackSynchronizer {
     const canonical = session.state?.playback;
     if (!canonical) return "applied";
     const key = `${tabId ?? "default"}:${playbackKey(canonical)}`;
+    const generation = this.generation;
     const inFlight = this.applicationInFlight;
     if (inFlight) {
       const result = await inFlight.promise;
-      if (inFlight.key === key) return result;
+      if (generation !== this.generation) return "deferred";
+      if (
+        inFlight.session === session && inFlight.key === key &&
+        playbackKey(canonical) === playbackKey(session.state!.playback)
+      ) return result;
       return this.apply(session, tabId);
     }
 
     const promise = this.applyCanonical(
       canonical,
       session.client.clockOffsetMs,
+      generation,
       tabId,
     );
-    this.applicationInFlight = { key, promise };
+    this.applicationInFlight = { session, key, promise };
+    let result: PlaybackSyncResult;
     try {
-      return await promise;
+      result = await promise;
     } finally {
       if (this.applicationInFlight?.promise === promise) {
         this.applicationInFlight = null;
       }
     }
+    if (generation !== this.generation) return "deferred";
+    if (playbackKey(canonical) !== playbackKey(session.state!.playback)) {
+      return this.apply(session, tabId);
+    }
+    return result;
   }
 
   private async applyCanonical(
     canonical: PartyPlaybackState,
     clockOffsetMs: number,
+    generation: number,
     tabId?: number,
   ): Promise<PlaybackSyncResult> {
     for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -146,6 +186,7 @@ export class PlaybackSynchronizer {
         // A page command can throw after YouTube Music has already accepted it.
         // Read the actual player state before declaring the track unavailable.
       }
+      if (generation !== this.generation) return "deferred";
 
       let local: LocalPlaybackState | null = null;
       try {
@@ -153,13 +194,17 @@ export class PlaybackSynchronizer {
       } catch {
         // Verification failure is handled as an unavailable track below.
       }
+      if (generation !== this.generation) return "deferred";
 
       if (local && this.matchesAppliedPlayback(local, playback)) return "applied";
       if (applicationResult === "navigating") return "navigating";
+      if (local?.interruption === "advertisement") return "deferred";
+      if (local?.interruption === "unavailable") return "track_unavailable";
 
       const correctTrack = playback.track
         ? local?.track?.videoId === playback.track.videoId
         : local?.paused === true;
+      if (correctTrack && local?.buffering) return "deferred";
       if (attempt === 0 && correctTrack) continue;
       return correctTrack ? "out_of_sync" : "track_unavailable";
     }
@@ -172,6 +217,7 @@ export class PlaybackSynchronizer {
     applied: PartyPlaybackState,
   ): boolean {
     if (!applied.track) return local.paused;
+    if (local.buffering || local.interruption) return false;
     if (local.track?.videoId !== applied.track.videoId) return false;
     if (local.paused !== applied.paused) return false;
     return isWithinPlaybackDrift(
